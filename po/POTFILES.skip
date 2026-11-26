@@ -130,3 +130,15 @@ sub/pidgin/plugins/perl/common/GtkStatusBox.c
 sub/pidgin/plugins/perl/common/GtkThemes.c
 sub/pidgin/plugins/perl/common/GtkUtils.c
 sub/pidgin/plugins/perl/common/Pidgin.c
+
+# CrossTalk Pecan uses a separate gettext domain.
+libpurple/protocols/msn/ab/pn_contactlist.c
+libpurple/protocols/msn/cvr/pn_peer_msg.c
+libpurple/protocols/msn/msn.c
+libpurple/protocols/msn/nexus.c
+libpurple/protocols/msn/notification.c
+libpurple/protocols/msn/pn_error.c
+libpurple/protocols/msn/pn_locale.h
+libpurple/protocols/msn/pn_oim.c
+libpurple/protocols/msn/session.c
+libpurple/protocols/msn/switchboard.c

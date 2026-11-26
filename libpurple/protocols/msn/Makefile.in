@@ -628,7 +628,7 @@ PECAN_DEFINES = \
 
 pkgdir = $(libdir)/purple-$(PURPLE_MAJOR_VERSION)
 EXTRA_DIST = Makefile.mingw pecan-build.mk COPYING AUTHORS README.md \
-	pidgin-copyright win32/resource.rc ext/libmspack/COPYING.LIB
+	pidgin-copyright win32/resource.rc ext/libmspack/COPYING.LIB po
 
 @STATIC_MSN_TRUE@noinst_LTLIBRARIES = libmsn.la
 @STATIC_MSN_TRUE@msn_static_flags = -DSTATIC_PECAN -Dpurple_init_msn_pecan_plugin=purple_init_msn_plugin

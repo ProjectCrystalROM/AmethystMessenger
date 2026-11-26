@@ -3,7 +3,7 @@ include $(srcdir)/pecan-build.mk
 
 pkgdir = $(libdir)/purple-$(PURPLE_MAJOR_VERSION)
 EXTRA_DIST = Makefile.mingw pecan-build.mk COPYING AUTHORS README.md \
-	pidgin-copyright win32/resource.rc ext/libmspack/COPYING.LIB
+	pidgin-copyright win32/resource.rc ext/libmspack/COPYING.LIB po
 
 if STATIC_MSN
 noinst_LTLIBRARIES = libmsn.la
