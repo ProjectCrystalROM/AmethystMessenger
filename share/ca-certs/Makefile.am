@@ -1,7 +1,8 @@
 CERTIFICATES = \
 		CAcert_Root.pem \
 		CAcert_Class3.pem \
-		mozilla.pem
+		mozilla.pem \
+		isrg-root-x1.pem
 
 #EXTRA_CERTS = \
 #		filename.pem

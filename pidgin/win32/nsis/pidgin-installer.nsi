@@ -547,6 +547,7 @@ Section Uninstall
     Delete "$INSTDIR\ca-certs\VeriSign_International_Server_Class_3_CA.pem"
     Delete "$INSTDIR\ca-certs\Verisign_RSA_Secure_Server_CA.pem"
     Delete "$INSTDIR\ca-certs\mozilla.pem"
+    Delete "$INSTDIR\ca-certs\isrg-root-x1.pem"
     RMDir "$INSTDIR\ca-certs"
     RMDir /r "$INSTDIR\locale"
     RMDir /r "$INSTDIR\pixmaps"
