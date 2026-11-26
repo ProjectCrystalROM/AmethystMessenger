@@ -8,9 +8,15 @@ The exact upstream GTK runtime source package for bundle version 2.16.6.3 is ava
 
 ## Other runtime dependencies
 
-- libxml2 2.9.2 source is included inside the historical Windows SDK archive named in `packaging/windows/inputs.sha256` under `src/libxml2-2.9.2.tar.gz`.
-- GtkSpell 2.0.16 source and build files are in the corresponding historical Windows SDK input named in `packaging/windows/inputs.sha256`.
-- NSS 3.24 and NSPR 4.12 sources are available from the [Mozilla NSS archive](https://archive.mozilla.org/pub/security/nss/releases/NSS_3_24_RTM/src/) and [Mozilla NSPR archive](https://archive.mozilla.org/pub/nspr/releases/v4.12/src/).
-- Source for Pidgin’s in-tree protocol plugins and helper modules is present in this repository. The dependency revisions used for the official Windows package are identified in Pidgin’s historical Windows build files and `ChangeLog.win32`.
+The [official Pidgin Windows build guide](https://www.pidgin.im/development/building/2.x.y/windows/) lists the historical source archives for the Windows runtime dependencies and their extraction instructions. Relevant versions for the 2.11.0-era build include:
 
-The GTK source archive is a separate 54.7 MB upstream download and is not stored in Git history. For redistribution of a Windows installer, retain this exact source archive together with its upstream notices and the matching Amethyst source revision. Keep the SHA-256 checksums of acquired source archives with the release. If a source archive or a required source offer for any redistributable component is missing, do not describe that binary package as source-complete.
+- libxml2 2.9.2 (`libxml2-2.9.2_daa1.tar.gz`).
+- GtkSpell 2.0.16 (`gtkspell-2.0.16.tar.bz2`) and Enchant 1.6.0.
+- NSS 3.24 and NSPR 4.12 (`nss-3.24-nspr-4.12.tar.gz`).
+- SILC Toolkit 1.1.12, Meanwhile 1.0.2, and Cyrus SASL 2.1.26.
+- MinGW GCC 4.7.2 runtime sources for libssp, as described in the Pidgin build guide.
+- Pidgin's 2013 Windows installation dependencies bundle, which contains the crash reporting runtime.
+
+The build inputs include the libxml2 SDK archive and GtkSpell archive used for this build. The official Pidgin source tree contains the in-tree protocol plugins and their source. For reproducibility, use the exact historical versions and patches documented by those recipes rather than substituting current releases.
+
+The GTK source archive is a separate 54.7 MB upstream download and is not stored in Git history. The source archive is signed by the upstream Pidgin Windows maintainer and has a matching `.asc` file in the same SourceForge directory. For redistribution of a Windows installer, retain this exact source archive and signature, the Amethyst source revision, and the exact source archives or valid source offers for the other bundled runtime libraries. Keep the SHA-256 checksums with the release. If a required source archive or source offer is missing, do not describe the binary package as source-complete.
