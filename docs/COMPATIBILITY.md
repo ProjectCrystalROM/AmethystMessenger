@@ -13,7 +13,7 @@ This is static compatibility evidence. The compiler version and PE subsystem alo
 | Check | Result |
 | --- | --- |
 | Windows build and NSIS installer | Passed. `make -f Makefile.mingw installer_offline` path invokes the Amethyst package script. |
-| Installer execution | Passed in a new Wine prefix. Silent install and update completed; the Start Menu entries and Amethyst uninstall registry values were created. |
+| Installer execution | Passed in a new Wine prefix. Silent install and update completed; Start Menu entries and Amethyst uninstall registry values were created. Silent uninstall removed the application and preserved the Amethyst profile. |
 | Branding metadata | Passed. Installer reports Product Name `Amethyst Messenger`, Publisher `Project Crystal`, and version `2.11.0`. Launcher reports `amethyst.exe`, `Amethyst Messenger`, and the same version. |
 | Launcher startup | Passed in Wine. `amethyst.exe --version` reports `Amethyst Messenger 2.11.0 (libpurple 2.11.0)`. |
 | GTK application startup | Passed in Wine with `--debug --nologin`. The GTK2 interface initialized and remained running through the 16-second smoke window. The process was stopped by the timeout. |

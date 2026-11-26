@@ -40,7 +40,7 @@ The integrated msn-pecan protocol is packaged as `plugins/libmsn.dll` with proto
 
 ## Source, attribution, and contributions
 
-This source derives from the Pidgin 2.11.0 release and includes msn-pecan for CrossTalk connectivity. Retain the upstream notices. Amethyst Messenger is distributed under the GNU GPL as described by `COPYING`; see [licensing notes](docs/LICENSING.md) for bundled component details. Reproducible Windows build inputs and checksums are documented in [BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
+This source derives from the Pidgin 2.11.0 release and includes msn-pecan for CrossTalk connectivity. Retain the upstream notices. Amethyst Messenger is distributed under the GNU GPL as described by `COPYING`; see [licensing notes](docs/LICENSING.md) and the [third-party source list](docs/THIRD-PARTY-SOURCES.md) for bundled component details. Reproducible Windows build inputs and checksums are documented in [BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
 
 Contributions should focus on preservation, tested compatibility, and small changes with clear user benefit. Include target OS, build command, and test evidence with compatibility changes. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
