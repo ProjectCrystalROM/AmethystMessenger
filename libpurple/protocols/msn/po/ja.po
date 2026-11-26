@@ -1,0 +1,827 @@
+# Japanese translation for msn-pecan
+# Copyright (c) 2011 Rosetta Contributors and Canonical Ltd 2011
+# This file is distributed under the same license as the msn-pecan package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2011.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: msn-pecan\n"
+"Report-Msgid-Bugs-To: FULL NAME <EMAIL@ADDRESS>\n"
+"POT-Creation-Date: 2010-02-06 02:03+0200\n"
+"PO-Revision-Date: 2011-10-22 07:48+0000\n"
+"Last-Translator: SUZUKI N <Unknown>\n"
+"Language-Team: Japanese <ja@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Launchpad-Export-Date: 2012-10-13 08:12+0000\n"
+"X-Generator: Launchpad (build 16137)\n"
+
+#: msn.c:160
+msgid "Nudge"
+msgstr "シェイク"
+
+#: msn.c:161
+#, c-format
+msgid "%s has nudged you!"
+msgstr "%s はあなたにシェイクを送っています。"
+
+#: msn.c:162
+#, c-format
+msgid "Nudging %s..."
+msgstr "%s にシェイクを送っています..."
+
+#: msn.c:306
+msgid "Set your friendly name."
+msgstr "公開する名前を設定してください。"
+
+#: msn.c:307
+msgid "This is the name that other MSN buddies will see you as."
+msgstr "MSN の他の仲間があなたを見るときに表示される名前です。"
+
+#: msn.c:310 msn.c:331 msn.c:349 msn.c:366 msn.c:383
+msgid "OK"
+msgstr "OK"
+
+#: msn.c:311 msn.c:332 msn.c:350 msn.c:367 msn.c:384 msn.c:405
+msgid "Cancel"
+msgstr "キャンセル"
+
+#: msn.c:326
+msgid "Set your personal message."
+msgstr "パーソナル メッセージを設定してください。"
+
+#: msn.c:327
+msgid "This is the message that other MSN buddies will see under your name."
+msgstr "MSN の他の仲間があなたの名前の下を見るときに表示されるメッセージです。"
+
+#: msn.c:347
+msgid "Set your home phone number."
+msgstr "自宅の電話番号を設定してください。"
+
+#: msn.c:364
+msgid "Set your work phone number."
+msgstr "オフィスの電話番号を設定してください。"
+
+#: msn.c:381
+msgid "Set your mobile phone number."
+msgstr "携帯電話の番号を設定してください。"
+
+#: msn.c:396
+msgid "Allow MSN Mobile pages?"
+msgstr "MSN モバイル・ページを許可しますか?"
+
+#: msn.c:397
+msgid ""
+"Do you want to allow or disallow people on your buddy list to send you MSN "
+"Mobile pages to your cell phone or other mobile device?"
+msgstr "仲間が携帯電話などのモバイル機器へ MSN モバイル・ページを送信することを許可しますか?"
+
+#: msn.c:403
+msgid "Allow"
+msgstr "許可する"
+
+#: msn.c:404
+msgid "Disallow"
+msgstr "許可しない"
+
+#: msn.c:419
+msgid "This account's email is not enabled."
+msgstr "このアカウントの電子メールは有効ではありません。"
+
+#: msn.c:463
+msgid "Send a mobile message."
+msgstr "モバイル・メッセージを送信します。"
+
+#: msn.c:465
+msgid "Page"
+msgstr "ページ"
+
+#: msn.c:466
+msgid "Close"
+msgstr "閉じる"
+
+#: msn.c:624
+#, c-format
+msgid "Playing %s"
+msgstr "再生中: %s"
+
+#: msn.c:626
+#, c-format
+msgid "Editing %s"
+msgstr "%s の編集"
+
+#: msn.c:676
+msgid "Status"
+msgstr "ステータス"
+
+#: msn.c:677
+msgid "Idle"
+msgstr "待機中"
+
+#: msn.c:687
+msgid "Personal Message"
+msgstr "パーソナル メッセージ"
+
+#: msn.c:704
+msgid "Now Listening"
+msgstr "再生中の曲"
+
+#: msn.c:710
+msgid "Playing a game"
+msgstr "ゲームで遊ぶ"
+
+#: msn.c:714
+msgid "Working"
+msgstr "仕事中"
+
+#: msn.c:718
+msgid "Has you"
+msgstr ""
+
+#: msn.c:719 msn.c:723 msn.c:1720
+msgid "Yes"
+msgstr "はい"
+
+#: msn.c:719 msn.c:723 msn.c:1720
+msgid "No"
+msgstr "いいえ"
+
+#: msn.c:722
+msgid "Blocked"
+msgstr "ブロック"
+
+#: msn.c:734
+msgid "Message"
+msgstr "メッセージ"
+
+#: msn.c:749
+msgid "Be Right Back"
+msgstr "すぐ戻ります"
+
+#: msn.c:750
+msgid "Busy"
+msgstr "取り込み中"
+
+#: msn.c:751
+msgid "On the Phone"
+msgstr "電話中"
+
+#: msn.c:752
+msgid "Out to Lunch"
+msgstr "食事に出かけています"
+
+#: msn.c:770
+msgid "Song Title"
+msgstr "曲名"
+
+#: msn.c:771
+msgid "Song Artist"
+msgstr "アーティスト"
+
+#: msn.c:772
+msgid "Song Album"
+msgstr "アルバム"
+
+#: msn.c:773
+msgid "Game Name"
+msgstr "ゲーム名"
+
+#: msn.c:774
+msgid "Office App Name"
+msgstr "オフィス アプリケーション名"
+
+#: msn.c:794
+msgid "Set Friendly Name..."
+msgstr "公開する名前の設定..."
+
+#: msn.c:799
+msgid "Set Personal Message..."
+msgstr "パーソナル メッセージの設定..."
+
+#: msn.c:806
+msgid "Set Home Phone Number..."
+msgstr "自宅の電話番号の設定..."
+
+#: msn.c:810
+msgid "Set Work Phone Number..."
+msgstr "オフィスの電話番号の設定..."
+
+#: msn.c:814
+msgid "Set Mobile Phone Number..."
+msgstr "携帯の電話番号の設定..."
+
+#: msn.c:820
+msgid "Enable/Disable Mobile Devices..."
+msgstr "モバイル機器の有効/無効..."
+
+#: msn.c:825
+msgid "Allow/Disallow Mobile Pages..."
+msgstr "モバイル ページの許可/非許可...."
+
+#: msn.c:835
+msgid "Open Hotmail Inbox"
+msgstr "Hotmail の受信箱を開く"
+
+#. * @todo why is there a special way to do this?
+#: msn.c:865
+msgid "Send to Mobile"
+msgstr "モバイル機器へ送信"
+
+#: msn.c:873
+msgid "Initiate _Chat"
+msgstr "チャットの開始(_C)"
+
+#: msn.c:899
+msgid ""
+"SSL support is needed for MSN. Please install a supported SSL library."
+msgstr "MSN では SSL サポートが必要です (サポートする SSL ライブラリをインストールしてください)"
+
+#: msn.c:934
+msgid "Connecting"
+msgstr "接続中"
+
+#: msn.c:937
+msgid "Failed to connect to server."
+msgstr "サーバーへの接続に失敗しました。"
+
+#: msn.c:1685
+msgid "Username"
+msgstr "ユーザー名"
+
+#: msn.c:1695
+msgid "Friendly Name"
+msgstr "表示する名前"
+
+#: msn.c:1711
+msgid "Home Phone"
+msgstr "自宅電話"
+
+#: msn.c:1714
+msgid "Mobile Phone"
+msgstr "携帯電話"
+
+#: msn.c:1717
+msgid "Work Phone"
+msgstr "勤務先電話"
+
+#: msn.c:1719
+msgid "Has Space"
+msgstr ""
+
+#: msn.c:1728
+msgid "Profile URL"
+msgstr "プロフィールの URL"
+
+#. *< type
+#. *< ui_requirement
+#. *< flags
+#. *< dependencies
+#. *< priority
+#. *< id
+#. *< name
+#. *< version
+#. *< summary
+#: msn.c:1854 msn.c:1855
+msgid "WLM Protocol Plugin"
+msgstr "WLM プロトコル プラグイン"
+
+#: msn.c:1890
+msgid "Server"
+msgstr "サーバー"
+
+#: msn.c:1893
+msgid "Port"
+msgstr "ポート番号"
+
+#: msn.c:1896
+msgid "Use HTTP Method"
+msgstr "HTTP メソッドを利用する"
+
+#: msn.c:1899
+msgid "Show custom smileys"
+msgstr "独自のスマイリーを表示する"
+
+#: msn.c:1902
+msgid "Use server-side alias"
+msgstr "サーバー側の別名を使用する"
+
+#: msn.c:1906
+msgid "Use direct connections"
+msgstr "直接接続を使用する"
+
+#: msn.c:1910
+msgid "Use user displays"
+msgstr ""
+
+#: msn.c:1913
+msgid "Don't show Messenger Plus! tags"
+msgstr "Messenger Plus! のタグを表示しない"
+
+#: msn.c:1920
+msgid "nudge: nudge a user to get their attention"
+msgstr "合図: ユーザーに向けて警告音を鳴らす"
+
+#: nexus.c:82
+#, c-format
+msgid "error on nexus server: %s"
+msgstr ""
+
+#: nexus.c:86
+msgid "error on nexus server"
+msgstr ""
+
+#: nexus.c:187
+msgid "nexus parse error"
+msgstr ""
+
+#: nexus.c:215 nexus.c:308 nexus.c:342 nexus.c:421
+msgid "nexus stream error"
+msgstr ""
+
+#: notification.c:90 notification.c:135
+#, c-format
+msgid ""
+"Error on notification server:\n"
+"%s"
+msgstr ""
+"通知サーバー上のエラー:\n"
+"%s"
+
+#: notification.c:97
+msgid ""
+"Error on notification server:\n"
+"Unknown"
+msgstr ""
+"通知サーバー上のエラー:\n"
+"不明なエラー"
+
+#: notification.c:249
+#, c-format
+msgid "%s is not a valid group."
+msgstr "%s は正しいグループではありません"
+
+#: notification.c:254 session.c:427
+msgid "Unknown error."
+msgstr "不明なエラーです。"
+
+#: notification.c:257
+#, c-format
+msgid "%s on %s (%s)"
+msgstr ""
+
+#: notification.c:588
+#, c-format
+msgid "Unable to add user on %s (%s)"
+msgstr "%s (%s) のユーザを追加できません"
+
+#: notification.c:592
+#, c-format
+msgid "Unable to block user on %s (%s)"
+msgstr "%s (%s) のユーザをブロックできません"
+
+#: notification.c:596
+#, c-format
+msgid "Unable to permit user on %s (%s)"
+msgstr ""
+
+#: notification.c:982
+msgid "Unable to rename group"
+msgstr "グループ名を変更できません"
+
+#: notification.c:1041
+msgid "Unable to delete group"
+msgstr "グループを削除できません"
+
+#: notification.c:1638
+#, c-format
+msgid ""
+"The MSN server will shut down for maintenance in %d minutes. You will "
+"automatically be signed out at that time.  Please finish any conversations "
+"in progress.\n"
+"\n"
+"After the maintenance has been completed, you will be able to successfully "
+"sign in."
+msgstr ""
+"MSN サーバーがメンテナンスのため %d 分シャットダウンします。その間は自動的にサインアウトされます。会話中であれば終了させてください。\n"
+"\n"
+"メンテナンス終了後にサインインできるようになります。"
+
+#: session.c:64
+#, c-format
+msgid "You are not in %s's contact list."
+msgstr "あなたは %s さんのコンタクト リストに入っていません。"
+
+#: session.c:397
+msgid "Our protocol is not supported by the server."
+msgstr "サーバーはこのプロトコルをサポートしていません。"
+
+#: session.c:401
+msgid "Error parsing HTTP."
+msgstr "HTTP を解析する際にエラーが発生しました。"
+
+#: session.c:405
+msgid "You have signed on from another location."
+msgstr "別の場所からサインインしています。"
+
+#: session.c:408
+msgid ""
+"The MSN servers are temporarily unavailable. Please wait and try again."
+msgstr "MSN サーバーが一時的に利用不可になっています。時間をあけて後で試してみてください。"
+
+#: session.c:413
+msgid "The MSN servers are going down temporarily."
+msgstr "MSN サーバーが一時的にダウンしています。"
+
+#: session.c:418
+#, c-format
+msgid "Unable to authenticate: %s"
+msgstr "認証できません: %s"
+
+#: session.c:419
+msgid "Unknown error"
+msgstr "不明なエラーです"
+
+#: session.c:422
+msgid ""
+"Your MSN buddy list is temporarily unavailable. Please wait and try again."
+msgstr "お使いの MSN 仲間リストが一時的に利用不可になっています。時間をあけて後で試してみてください。"
+
+#: switchboard.c:547
+msgid "Message could not be sent, not allowed while invisible:"
+msgstr "隠れている間はメッセージを送信できません:"
+
+#: switchboard.c:551
+msgid "Message could not be sent because the user is offline:"
+msgstr "送信先ユーザーがオフラインのためメッセージを送信できませんでした:"
+
+#: switchboard.c:555
+msgid "Message could not be sent because a connection error occurred:"
+msgstr "接続エラーが発生したのためメッセージを送信できませんでした:"
+
+#: switchboard.c:559
+msgid "Message could not be sent because we are sending too quickly:"
+msgstr "送信するタイミングが早過ぎたためメッセージを送信できませんでした:"
+
+#: switchboard.c:563
+msgid ""
+"Message could not be sent because we were unable to establish a session with "
+"the server. This is likely a server problem, try again in a few minutes:"
+msgstr ""
+"サーバーとの接続を確立できなかったため、メッセージを送信できませんでした (これはおそらくサーバー側の問題と思われます; "
+"数分後にもう一度試してみてください):"
+
+#: switchboard.c:570
+msgid ""
+"Message could not be sent because an error with the switchboard occurred:"
+msgstr "交換機系の接続エラーが発生したため、メッセージを送信できませんでした:"
+
+#: switchboard.c:577
+msgid "Message may have not been sent because an unknown error occurred:"
+msgstr "不明なエラーの発生により、メッセージは送信されませんでした:"
+
+#: switchboard.c:985
+#, c-format
+msgid ""
+"sent you a Messenger Plus! sound. Click <a href='audio://%s'>here</a> to "
+"play it."
+msgstr ""
+"はあなたに Messenger Plus! の音声を送信しました。再生するには <a href='audio://%s'>ここ</a> "
+"をクリックしてください。"
+
+#: switchboard.c:987
+#, c-format
+msgid ""
+"sent you a Messenger Plus! sound. Click <a href='file://%s'>here</a> to play "
+"it."
+msgstr ""
+"はあなたに Messenger Plus! の音声を送信しました。再生するには <a "
+"href='file://%s'>here</a>をクリックしてください。"
+
+#: switchboard.c:990
+#, c-format
+msgid ""
+"sent you a Messenger Plus! sound. Copy the following link in your web "
+"browser to play it: file://%s"
+msgstr ""
+"はあなたに Messenger Plus! の音声を送信しました。再生するには次のリンクを Web ブラウザーにコピーしてください: file://%s"
+
+#: switchboard.c:1002
+msgid ""
+"sent you a Messenger Plus! sound, but it cannot be played due to an error "
+"happened while storing the file."
+msgstr "はあなたに Messenger Plus! の音声を送信しましたが、ファイルを保存する際にエラーが発生したため再生できません。"
+
+#: switchboard.c:1189
+msgid "received handwritten message"
+msgstr "手書きのメッセージを受信しました"
+
+#: switchboard.c:1202
+msgid ""
+"sent you an handwritten message, but it cannot be displayed due to an error "
+"happened while storing the file."
+msgstr "はあなたに手書きのメッセージを受信しましたが、ファイルの保存でエラーが発生したため表示できません。"
+
+#: switchboard.c:1264
+#, c-format
+msgid "sent you a voice clip. Click <a href='file://%s'>here</a> to play it."
+msgstr "はあなたに音声クリップを送信しました。再生するには <a href='file://%s'>ここ</a> をクリックしてください。"
+
+#: switchboard.c:1266
+#, c-format
+msgid ""
+"sent you a voice clip. Copy the following link in your web browser to play "
+"it: file://%s"
+msgstr "はあなたに音声クリップを送信しました。再生するには次のリンクを Web ブラウザーにコピーしてください: file://%s"
+
+#: switchboard.c:1278
+msgid ""
+"sent you a voice clip, but it cannot be played dueto an error happened while "
+"storing the file."
+msgstr "はあなたに音声クリップを送信しましたが、ファイルの保存でエラーが発生したため再生できません。"
+
+#: switchboard.c:1361 switchboard.c:1368
+#, c-format
+msgid ""
+"<a href=\"file://%s\">Click here to view the wink in your web browser</a>"
+msgstr "<a href=\"file://%s\">ウインクを Web ブラウザで表示するにはここをクリックしてください</a>"
+
+#: switchboard.c:1399
+#, c-format
+msgid ""
+"sent a wink:\n"
+"%s\n"
+"%s"
+msgstr ""
+"ウインク送信:\n"
+"%s\n"
+"%s"
+
+#: switchboard.c:1401
+#, c-format
+msgid ""
+"sent a wink.\n"
+"%s"
+msgstr ""
+"ウインク送信。\n"
+"%s"
+
+#: switchboard.c:1417
+msgid "sent a wink, but it could not be displayed."
+msgstr "はウインクを送信しましたが、表示できませんでした。"
+
+#: switchboard.c:1638
+msgid " sent you a voice chat invite, which is not yet supported."
+msgstr " はあなたを音声チャットに招待しましたが、まだサポートされていません。"
+
+#: pn_error.c:34
+msgid "Unable to parse message"
+msgstr "メッセージを解読できません"
+
+#: pn_error.c:37
+msgid "Syntax Error (probably a client bug)"
+msgstr "文法エラー (おそらくクライアント側のバグ)"
+
+#: pn_error.c:40
+msgid "Invalid e-mail address"
+msgstr "無効な電子メール アドレスです"
+
+#: pn_error.c:43
+msgid "User does not exist"
+msgstr "ユーザーがいません"
+
+#: pn_error.c:46
+msgid "Fully qualified domain name missing"
+msgstr "FQDN (完全修飾ドメイン名) がありません"
+
+#: pn_error.c:49
+msgid "Already logged in"
+msgstr "既にサインインしています"
+
+#: pn_error.c:52
+msgid "Invalid screen name"
+msgstr "無効なスクリーン名です"
+
+#: pn_error.c:55
+msgid "Invalid friendly name"
+msgstr "無効な公開名です"
+
+#: pn_error.c:58
+msgid "List full"
+msgstr "リストがいっぱいです"
+
+#: pn_error.c:61
+msgid "Already there"
+msgstr "既にそこにいます"
+
+#: pn_error.c:64
+msgid "Not on list"
+msgstr "リストにありません"
+
+#: pn_error.c:67
+msgid "User is offline"
+msgstr "ユーザーはオフラインです"
+
+#: pn_error.c:70
+msgid "Already in the mode"
+msgstr "既にそのモードにいます"
+
+#: pn_error.c:73
+msgid "Already in opposite list"
+msgstr "既にリストの反対にいます"
+
+#: pn_error.c:76
+msgid "Too many groups"
+msgstr "グループが多すぎます"
+
+#: pn_error.c:79
+msgid "Invalid group"
+msgstr "無効なグループ名"
+
+#: pn_error.c:82
+msgid "User not in group"
+msgstr "ユーザーがグループにありません"
+
+#: pn_error.c:85
+msgid "Group name too long"
+msgstr "グループ名が長すぎます"
+
+#: pn_error.c:88
+msgid "Cannot remove group zero"
+msgstr "グループ 0 は削除できません"
+
+#: pn_error.c:91
+msgid "Tried to add a user to a group that doesn't exist"
+msgstr "存在しないグループにユーザーを追加しようとしました"
+
+#: pn_error.c:94
+msgid "Switchboard failed"
+msgstr "スイッチボードに失敗しました"
+
+#: pn_error.c:97
+msgid "Notify transfer failed"
+msgstr "通知の転送に失敗しました"
+
+#: pn_error.c:100
+msgid "Required fields missing"
+msgstr "必要な項目が不足しています"
+
+#: pn_error.c:103
+msgid "Too many hits to a FND"
+msgstr "FND にヒットしすぎです"
+
+#: pn_error.c:106
+msgid "Not logged in"
+msgstr "ログインしていません"
+
+#: pn_error.c:109
+msgid "Service temporarily unavailable"
+msgstr "一時的にサービスを利用できません"
+
+#: pn_error.c:112
+msgid "Database server error"
+msgstr "データベース サーバー エラー"
+
+#: pn_error.c:115
+msgid "Command disabled"
+msgstr "コマンドが無効です"
+
+#: pn_error.c:118
+msgid "File operation error"
+msgstr "ファイル操作エラー"
+
+#: pn_error.c:121
+msgid "Memory allocation error"
+msgstr "メモリ割り当てエラー"
+
+#: pn_error.c:124
+msgid "Wrong CHL value sent to server"
+msgstr "誤った CHL 値がサーバーに送信されました"
+
+#: pn_error.c:127
+msgid "Server busy"
+msgstr "サーバーが混み合っています"
+
+#: pn_error.c:130 pn_error.c:142 pn_error.c:192
+msgid "Server unavailable"
+msgstr "サーバーを利用できません"
+
+#: pn_error.c:133
+msgid "Peer notification server down"
+msgstr "ピア通知サーバーがダウンしています"
+
+#: pn_error.c:136
+msgid "Database connect error"
+msgstr "データベース接続エラーです"
+
+#: pn_error.c:139
+msgid "Server is going down (abandon ship)"
+msgstr "サーバーがダウンしています (見捨てましょう)"
+
+#: pn_error.c:145
+msgid "Error creating connection"
+msgstr "接続を開始する際にエラー"
+
+#: pn_error.c:148
+msgid "CVR parameters are either unknown or not allowed"
+msgstr "CVR パラメーターが不明または許可されていません"
+
+#: pn_error.c:151
+msgid "Unable to write"
+msgstr "書き込めません"
+
+#: pn_error.c:154
+msgid "Session overload"
+msgstr "セッションの負荷が過剰です"
+
+#: pn_error.c:157
+msgid "User is too active"
+msgstr "ユーザーがアクティブすぎます"
+
+#: pn_error.c:160
+msgid "Too many sessions"
+msgstr "セッションが多すぎです"
+
+#: pn_error.c:163
+msgid "Passport not verified"
+msgstr "パスポートは確認されていません"
+
+#: pn_error.c:166
+msgid "Bad friend file"
+msgstr "おかしな仲間ファイル"
+
+#: pn_error.c:169
+msgid "Not expected"
+msgstr "予想していないデータ"
+
+#: pn_error.c:172
+msgid "Friendly name changes too rapidly"
+msgstr "公開する名前が短すぎます"
+
+#: pn_error.c:180
+msgid "Server too busy"
+msgstr "サーバーがとてもビジーです"
+
+#: pn_error.c:184
+msgid "Authentication failed"
+msgstr "認証に失敗しました"
+
+#: pn_error.c:187
+msgid "Not allowed when hiding"
+msgstr "隠れているときは使用できません"
+
+#: pn_error.c:195
+msgid "Not accepting new users"
+msgstr "新しいユーザーを受け入れていません"
+
+#: pn_error.c:198
+msgid "Kids Passport without parental consent"
+msgstr "親の承諾がない Kids パスポートです"
+
+#: pn_error.c:201
+msgid "Passport account not yet verified"
+msgstr "まだパスポートのアカウントは確認されていません"
+
+#: pn_error.c:204
+msgid "Bad ticket"
+msgstr "おかしなチケットです"
+
+#: pn_error.c:207
+#, c-format
+msgid "Unknown Error Code %u"
+msgstr "未知のエラー コード %u"
+
+#: pn_oim.c:659
+msgid ""
+"The following message wasn't sent due to an authentication error. Please "
+"logout and login again before sending a new message."
+msgstr "次のメッセージが認証エラーのため送信されませんでした。新しいメッセージを送る前にサインインしなおしてください。"
+
+#: pn_oim.c:662
+msgid ""
+"The following message wasn't sent because the system is unavailable. This "
+"normally happens when the user is blocked or does not exist."
+msgstr "次のメッセージがシステム利用不可のため送信されませんでした。これは通常ユーザーがブロックされているか存在しない場合に発生します。"
+
+#: pn_oim.c:665
+msgid ""
+"The following message wasn't sent because you've sent messages too quickly. "
+"Please wait about 10 seconds before sending again the message."
+msgstr "次のメッセージは送信が早すぎたため送信されませんでした。メッセージを再送する前に10秒ほどお待ちください。"
+
+#: pn_oim.c:668
+msgid "The following message wasn't sent because it's too large."
+msgstr "次のメッセージはサイズが大きすぎるため送信されませんでした。"
+
+#: ab/pn_contactlist.c:815
+#, c-format
+msgid "Can't add to \"%s\"; it's a virtual group"
+msgstr "\"%s\" を追加できません; 仮想グループです"
+
+#: cvr/pn_peer_msg.c:557
+msgid "requests to view your webcam, but this request is not yet supported."
+msgstr "はWeb カメラの表示をリクエストしましたが、このリクエストはまだサポートされてません。"
+
+#: cvr/pn_peer_msg.c:562
+msgid "has sent you a webcam invite, which is not yet supported."
+msgstr "はあなたに Web カメラの招待を送信しましたが、まだサポートされていません。"

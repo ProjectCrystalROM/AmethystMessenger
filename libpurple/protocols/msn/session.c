@@ -1,16 +1,11 @@
 /**
- * @file session.c MSN session functions
+ * Copyright (C) 2008-2009 Felipe Contreras
+ * Copyright (C) 1998-2006 Pidgin (see pidgin-copyright)
  *
- * purple
- *
- * Purple is the legal property of its developers, whose names are too numerous
- * to list here.  Please refer to the COPYRIGHT file distributed with this
- * source distribution.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -19,482 +14,547 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-#include "internal.h"
-#include "debug.h"
-
-#include "error.h"
-#include "msnutils.h"
-#include "session.h"
+#include "session_private.h"
+#include "pn_log.h"
+#include "pn_util.h"
+#include "pn_locale.h"
 #include "notification.h"
-#include "oim.h"
+#include "pn_status.h"
+#include "pn_dp_manager.h"
+#include "ab/pn_contact_priv.h"
+#include "pn_buffer.h"
+
+#include "cmd/cmdproc_private.h"
+
+#if defined(PECAN_CVR)
+#include "cvr/pn_peer_link.h"
+#endif /* defined(PECAN_CVR) */
+
+#include "sync.h"
+#include "pn_auth.h"
+
+#include <glib/gstdio.h>
+#include <string.h>
+
+/* libpurple stuff. */
+#include <account.h>
+#include <version.h>
+#ifdef INTERNAL_MAINLOOP
+#include <eventloop.h>
+#endif
+
+#ifdef INTERNAL_MAINLOOP
+static inline gboolean
+g_main_context_iteration_timer ()
+{
+    g_main_context_iteration (NULL, FALSE);
+    return TRUE;
+}
+#endif
 
 MsnSession *
-msn_session_new(PurpleAccount *account)
+msn_session_new (const gchar *username,
+                 const gchar *password,
+                 gboolean http_method)
 {
-	MsnSession *session;
+    MsnSession *session;
 
-	g_return_val_if_fail(account != NULL, NULL);
+    session = g_new0 (MsnSession, 1);
 
-	session = g_new0(MsnSession, 1);
+    session->username = pn_normalize (username);
+    session->password = g_strndup (password, 16);
 
-	session->account = account;
-	session->notification = msn_notification_new(session);
-	session->userlist = msn_userlist_new(session);
+#ifdef INTERNAL_MAINLOOP
+    session->g_main_loop = g_main_loop_new  (NULL, FALSE);
+    session->g_main_loop_timer = purple_timeout_add (1000, g_main_context_iteration_timer, NULL);
+#endif
 
-	session->user = msn_user_new(session->userlist,
-								 purple_account_get_username(account), NULL);
-	msn_userlist_add_user(session->userlist, session->user);
-	session->oim = msn_oim_new(session);
+    session->config = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
-	session->protocol_ver = 0;
-	session->enable_mpop = TRUE; /* Default only */
+    /** @todo sb and ns need this here but should be updated on-the-fly. */
+    msn_session_set_bool (session, "use_http_method", http_method);
 
-	session->guid = rand_guid();
+#if 0
+    if (session->http_method)
+    {
+        PnNode *foo;
+        foo = PN_NODE (pn_http_server_new ("foo server"));
+        foo->session = session;
+        session->http_conn = foo;
+    }
+#endif
 
-	return session;
+    session->dp_manager = pn_dp_manager_new (session);
+
+    session->notification = msn_notification_new (session);
+    pn_node_set_id(session->notification->cmdproc->conn,
+                   session->conn_count++, "ns");
+
+    session->contactlist = pn_contactlist_new (session);
+
+    session->user = pn_contact_new (NULL);
+    pn_contact_set_passport (session->user, session->username);
+
+    session->conv_seq = 1;
+
+    session->oim_session = pn_oim_session_new (session);
+
+    session->conversations = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) msn_switchboard_unref);
+    session->chats = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, (GDestroyNotify) msn_switchboard_unref);
+
+#if defined(PECAN_CVR)
+    session->links = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) pn_peer_link_unref);
+#endif /* defined(PECAN_CVR) */
+
+    return session;
 }
 
 void
-msn_session_destroy(MsnSession *session)
+msn_session_destroy (MsnSession *session)
 {
-	g_return_if_fail(session != NULL);
+    if (!session)
+        return;
 
-	session->destroying = TRUE;
+    pn_oim_session_free (session->oim_session);
 
-	while (session->url_datas) {
-		purple_util_fetch_url_cancel(session->url_datas->data);
-		session->url_datas = g_slist_delete_link(session->url_datas, session->url_datas);
-	}
+    if (session->connected)
+        msn_session_disconnect (session);
 
-	if (session->connected)
-		msn_session_disconnect(session);
+#if defined(PECAN_CVR)
+    g_hash_table_destroy (session->links);
+#endif /* defined(PECAN_CVR) */
 
-	if (session->soap_cleanup_handle)
-		purple_timeout_remove(session->soap_cleanup_handle);
+    msn_notification_destroy (session->notification);
 
-	if (session->soap_table != NULL)
-		g_hash_table_destroy(session->soap_table);
+    pn_dp_manager_free (session->dp_manager);
 
-	while (session->slplinks != NULL)
-		msn_slplink_unref(session->slplinks->data);
+    g_hash_table_destroy (session->conversations);
+    g_hash_table_destroy (session->chats);
 
-	while (session->switches != NULL)
-		msn_switchboard_destroy(session->switches->data);
+    pn_contactlist_destroy (session->contactlist);
 
-	if (session->oim != NULL)
-		msn_oim_destroy(session->oim);
+    g_free (session->passport_info.kv);
+    g_free (session->passport_info.sid);
+    g_free (session->passport_info.mspauth);
+    g_free (session->passport_info.client_ip);
 
-	if (session->nexus != NULL)
-		msn_nexus_destroy(session->nexus);
+    g_free (session->passport_info.mail_url);
 
-	if (session->user != NULL)
-		msn_user_unref(session->user);
+    g_free (session->passport_cookie.t);
+    g_free (session->passport_cookie.p);
 
-	if (session->notification != NULL)
-		msn_notification_destroy(session->notification);
+    if (session->autoupdate_tune.timer)
+        g_source_remove (session->autoupdate_tune.timer);
 
-	msn_userlist_destroy(session->userlist);
+    if (session->sync)
+        msn_sync_destroy (session->sync);
 
-	g_free(session->psm);
-	g_free(session->guid);
-	g_free(session->abch_cachekey);
-#if 0
-	g_free(session->blocked_text);
+    if (session->auth)
+        pn_auth_free (session->auth);
+
+    pn_contact_free (session->user);
+
+    g_hash_table_destroy (session->config);
+
+    g_free (session->username);
+    g_free (session->password);
+
+#ifdef INTERNAL_MAINLOOP
+    purple_timeout_remove (session->g_main_loop_timer);
+    g_main_loop_unref (session->g_main_loop);
 #endif
 
-	g_free(session->passport_info.sid);
-	g_free(session->passport_info.mspauth);
-	g_free(session->passport_info.client_ip);
-	g_free(session->passport_info.mail_url);
+    g_free (session);
+}
 
-	g_free(session);
+const gchar *
+msn_session_get_username (MsnSession *session)
+{
+    return session->username;
+}
+
+const gchar *
+msn_session_get_password (MsnSession *session)
+{
+    return session->password;
+}
+
+struct pn_contact *
+msn_session_get_contact (MsnSession *session)
+{
+    g_return_val_if_fail (session, NULL);
+    return session->user;
+}
+
+void
+msn_session_set_user_data (MsnSession *session,
+                           void *user_data)
+{
+    session->user_data = user_data;
+}
+
+void *
+msn_session_get_user_data (MsnSession *session)
+{
+    return session->user_data;
 }
 
 gboolean
-msn_session_connect(MsnSession *session, const char *host, int port,
-					gboolean http_method)
+msn_session_connect (MsnSession *session,
+                     const char *host,
+                     int port)
 {
-	g_return_val_if_fail(session != NULL, FALSE);
-	g_return_val_if_fail(!session->connected, TRUE);
+    g_return_val_if_fail (session, FALSE);
+    g_return_val_if_fail (!session->connected, TRUE);
 
-	session->connected = TRUE;
-	session->http_method = http_method;
+    session->connected = TRUE;
 
-	if (session->notification == NULL)
-	{
-		purple_debug_error("msn", "This shouldn't happen\n");
-		g_return_val_if_reached(FALSE);
-	}
+    if (!session->notification)
+    {
+        pn_error ("this shouldn't happen");
+        g_return_val_if_reached (FALSE);
+    }
 
-	return msn_notification_connect(session->notification, host, port);
+    if (msn_notification_connect (session->notification, host, port))
+    {
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 void
-msn_session_disconnect(MsnSession *session)
+msn_session_disconnect (MsnSession *session)
 {
-	g_return_if_fail(session != NULL);
+    g_return_if_fail (session);
+    g_return_if_fail (session->connected);
 
-	if (!session->connected)
-		return;
+    session->connected = FALSE;
 
-	if (session->login_timeout) {
-		purple_timeout_remove(session->login_timeout);
-		session->login_timeout = 0;
-	}
+    g_hash_table_remove_all (session->conversations);
+    g_hash_table_remove_all (session->chats);
 
-	session->connected = FALSE;
+    if (session->notification)
+        msn_notification_close (session->notification);
 
-	while (session->switches != NULL)
-		msn_switchboard_close(session->switches->data);
-
-	if (session->notification != NULL)
-		msn_notification_close(session->notification);
+    if (session->http_conn)
+        pn_node_close (session->http_conn);
 }
 
 /* TODO: This must go away when conversation is redesigned */
 MsnSwitchBoard *
-msn_session_find_swboard(MsnSession *session, const char *username)
+msn_session_find_swboard (const MsnSession *session,
+                          const gchar *username)
 {
-	GList *l;
+    g_return_val_if_fail (session, NULL);
+    g_return_val_if_fail (username, NULL);
 
-	g_return_val_if_fail(session  != NULL, NULL);
-	g_return_val_if_fail(username != NULL, NULL);
-
-	for (l = session->switches; l != NULL; l = l->next)
-	{
-		MsnSwitchBoard *swboard;
-
-		swboard = l->data;
-
-		if ((swboard->im_user != NULL) && !strcmp(username, swboard->im_user))
-			return swboard;
-	}
-
-	return NULL;
-}
-
-static PurpleConversation *
-msn_session_get_conv(MsnSession *session,const char *passport)
-{
-	PurpleAccount *account;
-	PurpleConversation * conv;
-
-	g_return_val_if_fail(session != NULL, NULL);
-	account = session->account;
-
-	conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM,
-									passport, account);
-	if(conv == NULL){
-		conv = purple_conversation_new(PURPLE_CONV_TYPE_IM, account, passport);
-	}
-	return conv;
-}
-
-/* put Message to User Conversation
- *
- * 	passport - the one want to talk to you
- */
-void
-msn_session_report_user(MsnSession *session,const char *passport,const char *msg,PurpleMessageFlags flags)
-{
-	PurpleConversation * conv;
-
-	if ((conv = msn_session_get_conv(session,passport)) != NULL){
-		purple_conversation_write(conv, NULL, msg, flags, time(NULL));
-	}
-}
-
-MsnSwitchBoard *
-msn_session_find_swboard_with_conv(MsnSession *session, PurpleConversation *conv)
-{
-	GList *l;
-
-	g_return_val_if_fail(session  != NULL, NULL);
-	g_return_val_if_fail(conv != NULL, NULL);
-
-	for (l = session->switches; l != NULL; l = l->next)
-	{
-		MsnSwitchBoard *swboard;
-
-		swboard = l->data;
-
-		if (swboard->conv == conv)
-			return swboard;
-	}
-
-	return NULL;
-}
-
-MsnSwitchBoard *
-msn_session_find_swboard_with_id(const MsnSession *session, int chat_id)
-{
-	GList *l;
-
-	g_return_val_if_fail(session != NULL, NULL);
-	g_return_val_if_fail(chat_id >= 0,    NULL);
-
-	for (l = session->switches; l != NULL; l = l->next)
-	{
-		MsnSwitchBoard *swboard;
-
-		swboard = l->data;
-
-		if (swboard->chat_id == chat_id)
-			return swboard;
-	}
-
-	return NULL;
-}
-
-MsnSwitchBoard *
-msn_session_get_swboard(MsnSession *session, const char *username,
-						MsnSBFlag flag)
-{
-	MsnSwitchBoard *swboard;
-
-	g_return_val_if_fail(session != NULL, NULL);
-
-	swboard = msn_session_find_swboard(session, username);
-
-	if (swboard == NULL)
-	{
-		swboard = msn_switchboard_new(session);
-		swboard->im_user = g_strdup(username);
-		if (msn_switchboard_request(swboard))
-			msn_switchboard_request_add_user(swboard, username);
-		else
-			return NULL;
-	}
-
-	swboard->flag |= flag;
-
-	return swboard;
+    return g_hash_table_lookup (session->conversations, username);
 }
 
 static gboolean
-msn_login_timeout_cb(gpointer data)
+find_sb_conv (gpointer key,
+              gpointer value,
+              gpointer user_data)
 {
-	MsnSession *session = data;
-	/* This forces the login process to finish, even though we haven't heard
-	   a response for our FQY requests yet. We'll at least end up online to the
-	   people we've already added. The rest will follow later. */
-	msn_session_finish_login(session);
-	session->login_timeout = 0;
-	return FALSE;
+    MsnSwitchBoard *swboard;
+    swboard = value;
+    return (swboard->conv == user_data);
+}
+
+MsnSwitchBoard *
+msn_session_find_swboard_with_conv (const MsnSession *session,
+                                    const PurpleConversation *conv)
+{
+    MsnSwitchBoard *swboard;
+
+    g_return_val_if_fail (session, NULL);
+    g_return_val_if_fail (conv, NULL);
+
+    swboard = g_hash_table_find (session->conversations, find_sb_conv, (gpointer) conv);
+    if (!swboard)
+        swboard = g_hash_table_find (session->chats, find_sb_conv, (gpointer) conv);
+
+    return swboard;
+}
+
+MsnSwitchBoard *
+msn_session_find_swboard_with_id (const MsnSession *session,
+                                  int chat_id)
+{
+    g_return_val_if_fail (session, NULL);
+    g_return_val_if_fail (chat_id >= 0,    NULL);
+
+    return g_hash_table_lookup (session->chats, GINT_TO_POINTER (chat_id));
+}
+
+MsnSwitchBoard *
+msn_session_get_swboard (MsnSession *session,
+                         const char *username)
+{
+    MsnSwitchBoard *swboard;
+
+    g_return_val_if_fail (session, NULL);
+
+    swboard = msn_session_find_swboard (session, username);
+
+    if (!swboard)
+    {
+        swboard = msn_switchboard_new(session);
+        g_hash_table_insert (session->conversations, g_strdup (username), swboard);
+        swboard->im_user = g_strdup(username);
+        msn_switchboard_request(swboard);
+        msn_switchboard_request_add_user(swboard, username);
+        pn_node_set_id(swboard->cmdproc->conn, session->conn_count++, username);
+    }
+
+    return swboard;
 }
 
 void
-msn_session_activate_login_timeout(MsnSession *session)
+msn_session_warning (MsnSession *session,
+                     const gchar *fmt,
+                     ...)
 {
-	if (!session->logged_in && session->connected) {
-		if (session->login_timeout)
-			purple_timeout_remove(session->login_timeout);
-		session->login_timeout =
-			purple_timeout_add_seconds(MSN_LOGIN_FQY_TIMEOUT,
-			                           msn_login_timeout_cb, session);
-	}
+    PurpleAccount *account;
+    PurpleConnection *connection;
+    gchar *tmp;
+    va_list args;
+
+    account = msn_session_get_user_data (session);
+    connection = purple_account_get_connection (account);
+
+    va_start (args, fmt);
+
+    tmp = g_strdup_vprintf (fmt, args);
+
+    purple_notify_error (connection, NULL, tmp, NULL);
+
+    g_free (tmp);
+
+    va_end (args);
 }
 
+
+#if PURPLE_VERSION_CHECK(2,3,0)
+static PurpleConnectionError msn_error_to_purple_reason(MsnErrorType error)
+{
+    switch (error) {
+        case MSN_ERROR_SERVCONN:
+        case MSN_ERROR_HTTP_MALFORMED:
+            return PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
+        case MSN_ERROR_UNSUPPORTED_PROTOCOL:
+            return PURPLE_CONNECTION_ERROR_AUTHENTICATION_IMPOSSIBLE;
+        case MSN_ERROR_SIGN_OTHER:
+            return PURPLE_CONNECTION_ERROR_NAME_IN_USE;
+        case MSN_ERROR_AUTH:
+            return PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
+        default:
+            return PURPLE_CONNECTION_ERROR_OTHER_ERROR;
+    }
+}
+#endif
+
+void
+msn_session_set_error (MsnSession *session,
+                       MsnErrorType error,
+                       const char *info)
+{
+    PurpleAccount *account;
+    PurpleConnection *connection;
+    char *msg;
+
+    account = msn_session_get_user_data (session);
+    connection = purple_account_get_connection (account);
+
+    switch (error)
+    {
+        case MSN_ERROR_SERVCONN:
+            msg = g_strdup (info);
+            break;
+        case MSN_ERROR_UNSUPPORTED_PROTOCOL:
+            msg = g_strdup (_("Our protocol is not supported by the "
+                              "server."));
+            break;
+        case MSN_ERROR_HTTP_MALFORMED:
+            msg = g_strdup (_("Error parsing HTTP."));
+            break;
+        case MSN_ERROR_SIGN_OTHER:
+            msg = g_strdup (_("You have signed on from another location."));
+            break;
+        case MSN_ERROR_SERV_UNAVAILABLE:
+            msg = g_strdup (_("The MSN servers are temporarily "
+                              "unavailable. Please wait and try "
+                              "again."));
+            break;
+        case MSN_ERROR_SERV_DOWN:
+            msg = g_strdup (_("The MSN servers are going down "
+                              "temporarily."));
+            break;
+        case MSN_ERROR_AUTH:
+            msg = g_strdup_printf (_("Unable to authenticate: %s"),
+                                   info ? info : _("Unknown error"));
+            break;
+        case MSN_ERROR_BAD_BLIST:
+            msg = g_strdup (_("Your MSN buddy list is temporarily "
+                              "unavailable. Please wait and try "
+                              "again."));
+            break;
+        default:
+            msg = g_strdup (_("Unknown error."));
+            break;
+    }
+
+    msn_session_disconnect (session);
+
+#if PURPLE_VERSION_CHECK(2,3,0)
+    purple_connection_error_reason (connection,
+            msn_error_to_purple_reason(error), msg);
+#else
+    purple_connection_error (connection, msg);
+#endif
+
+    g_free (msg);
+}
+
+#ifdef HAVE_LIBPURPLE
+/* stupid libpurple's local contact list, we don't need you! */
 static void
-msn_session_sync_users(MsnSession *session)
+sync_users (MsnSession *session)
 {
-	PurpleConnection *gc = purple_account_get_connection(session->account);
-	GList *to_remove = NULL;
-	GSList *buddies;
+    PurpleAccount *account;
+    GSList *buddies;
+    GList *to_remove = NULL;
 
-	g_return_if_fail(gc != NULL);
+    account = msn_session_get_user_data(session);
 
-	/* The core used to use msn_add_buddy to add all buddies before
-	 * being logged in. This no longer happens, so we manually iterate
-	 * over the whole buddy list to identify sync issues.
-	 */
-	for (buddies = purple_find_buddies(session->account, NULL); buddies;
-			buddies = g_slist_delete_link(buddies, buddies)) {
-		PurpleBuddy *buddy = buddies->data;
-		const gchar *buddy_name = purple_buddy_get_name(buddy);
-		const gchar *group_name = purple_group_get_name(purple_buddy_get_group(buddy));
-		MsnUser *remote_user;
-		gboolean found = FALSE;
+    for (buddies = purple_find_buddies(account, NULL); buddies;
+         buddies = g_slist_delete_link(buddies, buddies))
+    {
+        PurpleBuddy *buddy = buddies->data;
+        const gchar *buddy_name = purple_buddy_get_name(buddy);
+        const gchar *group_name = purple_group_get_name(purple_buddy_get_group(buddy));
+        struct pn_contact *contact;
+        gboolean found = FALSE;
 
-		remote_user = msn_userlist_find_user(session->userlist, buddy_name);
-		if (remote_user && remote_user->list_op & MSN_LIST_FL_OP) {
-			GList *l;
-			for (l = remote_user->group_ids; l; l = l->next) {
-				const char *name = msn_userlist_find_group_name(remote_user->userlist, l->data);
-				if (name && !g_ascii_strcasecmp(group_name, name)) {
-					found = TRUE;
-					break;
-				}
-			}
+        contact = pn_contactlist_find_contact(session->contactlist, buddy_name);
 
-			/* We don't care if they're in a different group, as long as they're on the
-			 * list somewhere. If we check for the group, we cause pain, agony and
-			 * suffering for people who decide to re-arrange their buddy list elsewhere.
-			 */
-			if (!found) {
-				if ((remote_user == NULL) || !(remote_user->list_op & MSN_LIST_FL_OP)) {
-					/* The user is not on the server list */
-					msn_error_sync_issue(session, buddy_name, group_name);
-				} else {
-					/* The user is not in that group on the server list */
-					to_remove = g_list_prepend(to_remove, buddy);
-				}
-			}
-		}
-	}
+        if (contact && contact->list_op & MSN_LIST_FL_OP) {
+            struct pn_group *group;
 
-	if (to_remove != NULL) {
-		g_list_foreach(to_remove, (GFunc)purple_blist_remove_buddy, NULL);
-		g_list_free(to_remove);
-	}
+            group = pn_contactlist_find_group_with_name(session->contactlist,
+                                                        group_name);
+
+            found = pn_contact_is_in_group(contact, group);
+        }
+
+        if (!found) {
+            pn_warning("synchronization issue; buddy %s not found in group %s: removing",
+                       purple_buddy_get_name(buddy), group_name);
+            to_remove = g_list_prepend(to_remove, buddy);
+        }
+    }
+    if (to_remove) {
+        g_list_foreach(to_remove, (GFunc) purple_blist_remove_buddy, NULL);
+        g_list_free(to_remove);
+    }
+}
+#endif /* HAVE_LIBPURPLE */
+
+void
+msn_session_finish_login (MsnSession *session)
+{
+    PurpleAccount *account;
+    PurpleStoredImage *img;
+
+    if (session->logged_in)
+        return;
+
+    account = msn_session_get_user_data (session);
+
+#ifdef HAVE_LIBPURPLE
+    sync_users (session);
+#endif
+
+    img = purple_buddy_icons_find_account_icon (account);
+
+    {
+        struct pn_buffer *image;
+        if (img)
+            image = pn_buffer_new_memdup ((const gpointer) purple_imgstore_get_data (img),
+                                             purple_imgstore_get_size (img));
+        else
+            image = NULL;
+        pn_contact_set_buddy_icon (session->user, image);
+    }
+
+    purple_imgstore_unref (img);
+
+    session->logged_in = TRUE;
+
+    /** @todo move this to msn.c */
+    pn_update_status (session);
+    pn_update_personal_message (session);
+    pn_timeout_tune_status (session);
+
+    {
+        PurpleConnection *connection;
+        connection = purple_account_get_connection (account);
+        purple_connection_set_state (connection, PURPLE_CONNECTED);
+    }
+
+    pn_contactlist_check_pending (session->contactlist);
 }
 
 void
-msn_session_set_error(MsnSession *session, MsnErrorType error,
-					  const char *info)
+msn_session_set_bool (MsnSession *session,
+                      const gchar *fieldname,
+                      gboolean value)
 {
-	PurpleConnection *gc;
-	PurpleConnectionError reason;
-	char *msg;
-
-	if (session->destroying)
-		return;
-
-	gc = purple_account_get_connection(session->account);
-
-	switch (error)
-	{
-		case MSN_ERROR_SERVCONN:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(info);
-			break;
-		case MSN_ERROR_UNSUPPORTED_PROTOCOL:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(_("Our protocol is not supported by the "
-							 "server"));
-			break;
-		case MSN_ERROR_HTTP_MALFORMED:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(_("Error parsing HTTP"));
-			break;
-		case MSN_ERROR_SIGN_OTHER:
-			reason = PURPLE_CONNECTION_ERROR_NAME_IN_USE;
-			msg = g_strdup(_("You have signed on from another location"));
-			if (!purple_account_get_remember_password(session->account))
-				purple_account_set_password(session->account, NULL);
-			break;
-		case MSN_ERROR_SERV_UNAVAILABLE:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(_("The MSN servers are temporarily "
-							 "unavailable. Please wait and try "
-							 "again."));
-			break;
-		case MSN_ERROR_SERV_DOWN:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(_("The MSN servers are going down "
-							 "temporarily"));
-			break;
-		case MSN_ERROR_AUTH:
-			reason = PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED;
-			msg = g_strdup_printf(_("Unable to authenticate: %s"),
-								  (info == NULL ) ?
-								  _("Unknown error") : info);
-			/* Clear the password if it isn't being saved */
-			if (!purple_account_get_remember_password(session->account))
-				purple_account_set_password(session->account, NULL);
-			break;
-		case MSN_ERROR_BAD_BLIST:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup_printf(_("Your MSN buddy list is temporarily "
-			                        "unavailable: %s"),
-			                      (info == NULL) ? _("Unknown error") : info);
-			break;
-		default:
-			reason = PURPLE_CONNECTION_ERROR_NETWORK_ERROR;
-			msg = g_strdup(_("Unknown error"));
-			break;
-	}
-
-	msn_session_disconnect(session);
-
-	purple_connection_error_reason(gc, reason, msg);
-
-	g_free(msg);
+    g_hash_table_insert (session->config, g_strdup (fieldname), GINT_TO_POINTER (value));
 }
 
-static const char *
-get_login_step_text(MsnSession *session)
+gboolean
+msn_session_get_bool (const MsnSession *session,
+                      const gchar *fieldname)
 {
-	const char *steps_text[] = {
-		_("Connecting"),
-		_("Handshaking"),
-		_("Transferring"),
-		_("Handshaking"),
-		_("Starting authentication"),
-		_("Getting cookie"),
-		_("Authenticating"),
-		_("Sending cookie"),
-		_("Retrieving buddy list")
-	};
-
-	return steps_text[session->login_step];
+    return GPOINTER_TO_INT (g_hash_table_lookup (session->config, fieldname));
 }
 
 void
-msn_session_set_login_step(MsnSession *session, MsnLoginStep step)
+msn_session_set_prp (MsnSession *session,
+                     const char *key,
+                     const char *value)
 {
-	PurpleConnection *gc;
+    MsnCmdProc *cmdproc;
 
-	/* Prevent the connection progress going backwards, eg. if we get
-	 * transferred several times during login */
-	if (session->login_step >= step)
-		return;
+    cmdproc = session->notification->cmdproc;
 
-	/* If we're already logged in, we're probably here because of a
-	 * mid-session XFR from the notification server, so we don't want to
-	 * popup the connection progress dialog */
-	if (session->logged_in)
-		return;
+    if (value) {
+        /*
+         * We should investigate if other properties also need striping. If so,
+         * then pn_friendly_name_encode should be renamed to pn_prop_encode or
+         * something like that, and g_strstrip should be handled internally.
+         */
+        gchar *tmp = g_strdup (value);
+        gchar *enc = pn_friendly_name_encode (g_strstrip (tmp));
+        g_free (tmp);
 
-	gc = session->account->gc;
-
-	session->login_step = step;
-
-	purple_connection_update_progress(gc, get_login_step_text(session), step,
-									MSN_LOGIN_STEPS);
+        msn_cmdproc_send (cmdproc, "PRP", "%s %s", key, enc);
+        g_free (enc);
+    }
+    else {
+        msn_cmdproc_send (cmdproc, "PRP", "%s", key);
+    }
 }
 
 void
-msn_session_finish_login(MsnSession *session)
+msn_session_set_public_alias (MsnSession *session,
+                              const gchar *value)
 {
-	PurpleAccount *account;
-	PurpleConnection *gc;
-	PurpleStoredImage *img;
-
-	if (!session->logged_in) {
-		account = session->account;
-		gc = purple_account_get_connection(account);
-
-		img = purple_buddy_icons_find_account_icon(session->account);
-		/* TODO: Do we really want to call this if img is NULL? */
-		msn_user_set_buddy_icon(session->user, img);
-		if (img != NULL)
-			purple_imgstore_unref(img);
-
-		session->logged_in = TRUE;
-		purple_connection_set_state(gc, PURPLE_CONNECTED);
-
-		/* Sync users */
-		msn_session_sync_users(session);
-	}
-
-	/* TODO: Send this when updating status instead? */
-	msn_notification_send_uux_endpointdata(session);
-	msn_notification_send_uux_private_endpointdata(session);
-
-	msn_change_status(session);
+    msn_session_set_prp (session, "MFN",
+                         value ? value : msn_session_get_username (session));
 }
-

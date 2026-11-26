@@ -1,0 +1,14 @@
+*.o
+*.lo
+*.la
+*.so
+.*.swp
+
+*.dll
+*.so
+*.d
+*.mo
+
+win32/libmsn-pecan/
+
+.vscode/

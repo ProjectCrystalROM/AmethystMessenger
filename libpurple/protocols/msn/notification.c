@@ -1,16 +1,11 @@
 /**
- * @file notification.c Notification server functions
+ * Copyright (C) 2007-2009 Felipe Contreras
+ * Copyright (C) 1998-2006 Pidgin (see pidgin-copyright)
  *
- * purple
- *
- * Purple is the legal property of its developers, whose names are too numerous
- * to list here.  Please refer to the COPYRIGHT file distributed with this
- * source distribution.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -19,135 +14,259 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-#include "internal.h"
-#include "cipher.h"
-#include "core.h"
-#include "debug.h"
-
 #include "notification.h"
+#include "pn_global.h"
+#include "pn_log.h"
+#include "pn_locale.h"
+#include "sync.h"
+#include "pn_auth.h"
+#include "pn_global.h"
 
-#include "contact.h"
-#include "error.h"
-#include "msnutils.h"
-#include "state.h"
-#include "userlist.h"
+#include "session.h"
+#include "session_private.h"
+
+#include "pn_auth_priv.h"
+
+#include "cmd/cmdproc_private.h"
+#include "cmd/command_private.h"
+#include "cmd/transaction_private.h"
+#include "cmd/msg_private.h"
+
+#include "ab/pn_contactlist.h"
+#include "ab/pn_contactlist_priv.h"
+#include "ab/pn_contact_priv.h"
+#include "ab/pn_group.h"
+
+#include "io/pn_cmd_server.h"
+#include "io/pn_http_server.h"
+#include "io/pn_node_private.h"
+
+#include "pn_error.h"
+#include "pn_util.h"
+
+#include <glib/gstdio.h>
+
+#include <string.h>
+
+/* libpurple stuff. */
+#include <account.h>
+#include <cipher.h>
 
 static MsnTable *cbs_table;
+
+typedef struct
+{
+    gchar *who;
+    gchar *group_guid;
+} MsnAddBuddy;
+
+static void
+open_cb (PnNode *conn,
+         MsnNotification *notification)
+{
+    g_return_if_fail (conn != NULL);
+
+    pn_log ("begin");
+
+    pn_cmd_server_send (PN_CMD_SERVER (conn), "VER", "MSNP12");
+
+    pn_log ("end");
+}
+
+static void
+close_cb (PnNode *conn,
+          MsnNotification *notification)
+{
+    char *tmp;
+
+    {
+        if (conn->error)
+        {
+            const char *reason;
+            reason = conn->error->message;
+
+            pn_error ("connection error: (NS):reason=[%s]", reason);
+            tmp = g_strdup_printf (_("Error on notification server:\n%s"), reason);
+
+            g_clear_error (&conn->error);
+        }
+        else
+        {
+            pn_error ("connection error: (NS)");
+            tmp = g_strdup_printf (_("Error on notification server:\nUnknown"));
+        }
+    }
+
+    pn_node_close (PN_NODE (notification->conn));
+    notification->closed = TRUE;
+    msn_session_set_error (notification->session, MSN_ERROR_SERVCONN, tmp);
+
+    g_free (tmp);
+}
 
 /**************************************************************************
  * Main
  **************************************************************************/
 
 static void
-destroy_cb(MsnServConn *servconn)
+error_handler (MsnCmdProc *cmdproc,
+               MsnTransaction *trans,
+               gint error)
 {
-	MsnNotification *notification;
+    MsnNotification *notification;
+    gchar *reason;
 
-	notification = servconn->cmdproc->data;
-	g_return_if_fail(notification != NULL);
+    notification = cmdproc->data;
+    g_return_if_fail (notification);
 
-	msn_notification_destroy(notification);
+    reason = pn_error_to_string (error);
+    pn_error ("connection error: (NS):reason=[%s]", reason);
+
+    switch (error)
+    {
+        case 913:
+        case 208:
+            /* non-fatal */
+            break;
+        default:
+            {
+                char *tmp;
+                tmp = g_strdup_printf (_("Error on notification server:\n%s"), reason);
+                msn_session_set_error (notification->session, MSN_ERROR_SERVCONN, tmp);
+                g_free (tmp);
+            }
+    }
+
+    g_free (reason);
 }
 
 MsnNotification *
 msn_notification_new(MsnSession *session)
 {
-	MsnNotification *notification;
-	MsnServConn *servconn;
+    MsnNotification *notification;
 
-	g_return_val_if_fail(session != NULL, NULL);
+    g_return_val_if_fail(session != NULL, NULL);
 
-	notification = g_new0(MsnNotification, 1);
+    notification = g_new0(MsnNotification, 1);
 
-	notification->session = session;
-	notification->servconn = servconn = msn_servconn_new(session, MSN_SERVCONN_NS);
-	msn_servconn_set_destroy_cb(servconn, destroy_cb);
+    notification->session = session;
 
-	notification->cmdproc = servconn->cmdproc;
-	notification->cmdproc->data = notification;
-	notification->cmdproc->cbs_table = cbs_table;
+    {
+        PnNode *conn;
+        notification->conn = pn_cmd_server_new (PN_NODE_NS);
+        conn = PN_NODE (notification->conn);
 
-	return notification;
+        {
+            MsnCmdProc *cmdproc;
+            cmdproc = g_object_get_data(G_OBJECT(notification->conn), "cmdproc");
+            cmdproc->session = session;
+            cmdproc->cbs_table = cbs_table;
+            cmdproc->conn = conn;
+            cmdproc->error_handler = error_handler;
+            cmdproc->data = notification;
+
+            notification->cmdproc = cmdproc;
+        }
+
+        conn->session = session;
+
+        if (msn_session_get_bool (session, "use_http_method"))
+        {
+            if (session->http_conn)
+            {
+                /* A single http connection shared by all nodes */
+                pn_node_link (conn, session->http_conn);
+            }
+            else
+            {
+                /* Each node has it's own http connection. */
+                PnNode *foo;
+
+                foo = PN_NODE (pn_http_server_new ("foo server"));
+                foo->session = session;
+                pn_node_link (conn, foo);
+                g_object_unref (foo);
+            }
+        }
+
+        notification->open_handler = g_signal_connect (conn, "open", G_CALLBACK (open_cb), notification);
+        notification->close_handler = g_signal_connect (conn, "close", G_CALLBACK (close_cb), notification);
+        notification->error_handler = g_signal_connect (conn, "error", G_CALLBACK (close_cb), notification);
+    }
+
+    return notification;
 }
 
 void
 msn_notification_destroy(MsnNotification *notification)
 {
-	notification->cmdproc->data = NULL;
+    if (!notification)
+        return;
 
-	msn_servconn_set_destroy_cb(notification->servconn, NULL);
+    pn_timer_free(notification->alive_timer);
 
-	msn_servconn_destroy(notification->servconn);
+    if (notification->cmdproc)
+        notification->cmdproc->data = NULL;
 
-	g_free(notification);
+    g_signal_handler_disconnect (notification->conn, notification->open_handler);
+    g_signal_handler_disconnect (notification->conn, notification->close_handler);
+    g_signal_handler_disconnect (notification->conn, notification->error_handler);
+
+    pn_cmd_server_free (notification->conn);
+
+    g_free(notification);
 }
 
 /**************************************************************************
  * Connect
  **************************************************************************/
 
-static void
-connect_cb(MsnServConn *servconn)
-{
-	MsnCmdProc *cmdproc;
-	MsnSession *session;
-	MsnTransaction *trans;
-	GString *vers;
-	const char *ver_str;
-	int i;
-
-	g_return_if_fail(servconn != NULL);
-
-	cmdproc = servconn->cmdproc;
-	session = servconn->session;
-
-	vers = g_string_new("");
-
-	for (i = WLM_MAX_PROTOCOL; i >= WLM_MIN_PROTOCOL; i--)
-		g_string_append_printf(vers, " MSNP%d", i);
-
-	g_string_append(vers, " CVR0");
-
-	if (session->login_step == MSN_LOGIN_STEP_START)
-		msn_session_set_login_step(session, MSN_LOGIN_STEP_HANDSHAKE);
-	else
-		msn_session_set_login_step(session, MSN_LOGIN_STEP_HANDSHAKE2);
-
-	/* Skip the initial space */
-	ver_str = (vers->str + 1);
-	trans = msn_transaction_new(cmdproc, "VER", "%s", ver_str);
-	msn_cmdproc_send_trans(cmdproc, trans);
-
-	g_string_free(vers, TRUE);
-}
-
 gboolean
 msn_notification_connect(MsnNotification *notification, const char *host, int port)
 {
-	MsnServConn *servconn;
+    g_return_val_if_fail(notification != NULL, FALSE);
 
-	g_return_val_if_fail(notification != NULL, FALSE);
+    pn_node_connect (PN_NODE (notification->conn), host, port);
 
-	servconn = notification->servconn;
-
-	msn_servconn_set_connect_cb(servconn, connect_cb);
-	notification->in_use = msn_servconn_connect(servconn, host, port, TRUE);
-
-	return notification->in_use;
+    return TRUE;
 }
 
-void
-msn_notification_disconnect(MsnNotification *notification)
+/**************************************************************************
+ * Util
+ **************************************************************************/
+
+static void
+group_error_helper(MsnSession *session, const char *msg, const gchar *group_guid, int error)
 {
-	g_return_if_fail(notification != NULL);
-	g_return_if_fail(notification->in_use);
+    PurpleAccount *account;
+    PurpleConnection *gc;
+    char *reason = NULL;
+    char *title = NULL;
 
-	msn_servconn_disconnect(notification->servconn);
+    account = msn_session_get_user_data (session);
+    gc = purple_account_get_connection(account);
 
-	notification->in_use = FALSE;
+    if (error == 224)
+    {
+        const char *group_name;
+        group_name = pn_contactlist_find_group_name(session->contactlist, group_guid);
+        reason = g_strdup_printf(_("%s is not a valid group."),
+                                 group_name);
+    }
+    else
+    {
+        reason = g_strdup(_("Unknown error."));
+    }
+
+    title = g_strdup_printf(_("%s on %s (%s)"), msg,
+                            purple_account_get_username(account),
+                            purple_account_get_protocol_name(account));
+    purple_notify_error(gc, NULL, title, reason);
+    g_free(title);
+    g_free(reason);
 }
 
 /**************************************************************************
@@ -155,129 +274,139 @@ msn_notification_disconnect(MsnNotification *notification)
  **************************************************************************/
 
 void
-msn_got_login_params(MsnSession *session, const char *ticket, const char *response)
+msn_got_login_params(MsnSession *session, const char *login_params)
 {
-	MsnCmdProc *cmdproc;
-	MsnTransaction *trans;
+    MsnCmdProc *cmdproc;
 
-	cmdproc = session->notification->cmdproc;
+    cmdproc = session->notification->cmdproc;
 
-	msn_session_set_login_step(session, MSN_LOGIN_STEP_AUTH_END);
+    {
+        gchar **tokens;
+        printf("%s\n\n", tokens);
+        tokens = g_strsplit (login_params, "&", 2);
+        session->passport_cookie.t = g_strdup (tokens[0] + 2);
+        session->passport_cookie.p = g_strdup (tokens[1] + 2);
+        g_strfreev (tokens);
+    }
 
-	trans = msn_transaction_new(cmdproc, "USR", "SSO S %s %s %s", ticket, response, session->guid);
-
-	msn_cmdproc_send_trans(cmdproc, trans);
+    msn_cmdproc_send(cmdproc, "USR", "TWN S %s", login_params);
 }
 
 static void
 cvr_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	PurpleAccount *account;
-	MsnTransaction *trans;
+    msn_cmdproc_send(cmdproc, "USR", "TWN I %s",
+                     msn_session_get_username(cmdproc->session));
+}
 
-	account = cmdproc->session->account;
+static gboolean
+timeout (void *data)
+{
+    MsnNotification *ns = data;
+    MsnCmdProc *cmdproc = ns->cmdproc;
+    pn_timer_start(ns->alive_timer, 60);
+    pn_timer_cancel(cmdproc->timer);
+    msn_cmdproc_send_quick(cmdproc, "PNG", NULL, NULL);
 
-	trans = msn_transaction_new(cmdproc, "USR", "SSO I %s", purple_account_get_username(account));
-	msn_cmdproc_send_trans(cmdproc, trans);
+    return FALSE;
+}
+
+static gboolean
+alive_timeout (void *data)
+{
+    msn_session_set_error (data, MSN_ERROR_SERVCONN, "Timed out");
+    return FALSE;
+}
+
+static void auth_cb (PnAuth *auth, void *data)
+{
+    char *tmp;
+    tmp = g_strdup_printf("t=%s&p=%s",
+                          auth->security_token.messenger_msn_com_t,
+                          auth->security_token.messenger_msn_com_p);
+    msn_got_login_params (auth->session, tmp);
+    g_free(tmp);
 }
 
 static void
 usr_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session = cmdproc->session;
+    MsnSession *session;
 
-	if (!g_ascii_strcasecmp(cmd->params[1], "OK"))
-	{
-		/* authenticate OK */
-		msn_session_set_login_step(session, MSN_LOGIN_STEP_SYN);
-	}
-	else if (!g_ascii_strcasecmp(cmd->params[1], "SSO"))
-	{
-		/* RPS authentication */
+    session = cmdproc->session;
 
-		if (session->nexus)
-			msn_nexus_destroy(session->nexus);
-
-		session->nexus = msn_nexus_new(session);
-
-		session->nexus->policy = g_strdup(cmd->params[3]);
-		session->nexus->nonce = g_strdup(cmd->params[4]);
-
-		msn_session_set_login_step(session, MSN_LOGIN_STEP_AUTH_START);
-
-		msn_nexus_connect(session->nexus);
-	}
+    if (!g_ascii_strcasecmp(cmd->params[1], "OK"))
+    {
+        /* OK */
+        msn_cmdproc_send(cmdproc, "SYN", "%s %s", "0", "0");
+        if (!msn_session_get_bool (session, "use_http_method")) {
+            MsnNotification *ns = cmdproc->data;
+            ns->alive_timer = pn_timer_new (alive_timeout, session);
+            msn_cmdproc_set_timeout(cmdproc, 30, timeout, ns);
+        }
+    }
+    else if (!g_ascii_strcasecmp(cmd->params[1], "TWN"))
+    {
+        session->auth = pn_auth_new(session);
+        pn_auth_get_ticket (session->auth, 0, auth_cb, NULL);
+    }
 }
 
 static void
 usr_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
 {
-	MsnErrorType msnerr = 0;
+    MsnErrorType msnerr = 0;
 
-	switch (error)
-	{
-		case 500:
-		case 601:
-		case 910:
-		case 921:
-			msnerr = MSN_ERROR_SERV_UNAVAILABLE;
-			break;
-		case 911:
-			msnerr = MSN_ERROR_AUTH;
-			break;
-		default:
-			return;
-			break;
-	}
+    switch (error)
+    {
+        case 500:
+        case 601:
+        case 910:
+        case 921:
+            msnerr = MSN_ERROR_SERV_UNAVAILABLE;
+            break;
+        case 911:
+            msnerr = MSN_ERROR_AUTH;
+            break;
+        default:
+            return;
+            break;
+    }
 
-	msn_session_set_error(cmdproc->session, msnerr, NULL);
+    msn_session_set_error(cmdproc->session, msnerr, NULL);
 }
 
 static void
 ver_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session;
-	MsnTransaction *trans;
-	PurpleAccount *account;
-	gboolean protocol_supported = FALSE;
-	guint proto_ver;
-	size_t i;
+    MsnSession *session;
+    gboolean protocol_supported = FALSE;
+    const gchar *proto_str;
+    guint i;
 
-	session = cmdproc->session;
-	account = session->account;
+    session = cmdproc->session;
 
-	session->protocol_ver = 0;
-	for (i = 1; i < cmd->param_count; i++)
-	{
-		if (sscanf(cmd->params[i], "MSNP%d", &proto_ver) == 1) {
-			if (proto_ver >= WLM_MIN_PROTOCOL
-			 && proto_ver <= WLM_MAX_PROTOCOL
-			 && proto_ver > session->protocol_ver) {
-				protocol_supported = TRUE;
-				session->protocol_ver = proto_ver;
-			}
-		}
-	}
+    proto_str = "MSNP12";
 
-	if (!protocol_supported)
-	{
-		msn_session_set_error(session, MSN_ERROR_UNSUPPORTED_PROTOCOL,
-							  NULL);
-		return;
-	}
+    for (i = 1; i < cmd->param_count; i++)
+    {
+        if (!strcmp(cmd->params[i], proto_str))
+        {
+            protocol_supported = TRUE;
+            break;
+        }
+    }
 
-	purple_debug_info("msn", "Negotiated protocol version %d with the server.\n", session->protocol_ver);
+    if (!protocol_supported)
+    {
+        msn_session_set_error(session, MSN_ERROR_UNSUPPORTED_PROTOCOL,
+                              NULL);
+        return;
+    }
 
-	/*
-	 * Windows Live Messenger 8.5
-	 * Notice :CVR String discriminate!
-	 * reference of http://www.microsoft.com/globaldev/reference/oslocversion.mspx
-	 * to see the Local ID
-	 */
-	trans = msn_transaction_new(cmdproc, "CVR",
-					"0x0409 winnt 5.1 i386 MSNMSGR 8.5.1302 BC01 %s",
-					 purple_account_get_username(account));
-	msn_cmdproc_send_trans(cmdproc, trans);
+    msn_cmdproc_send(cmdproc, "CVR",
+                     "0x0409 winnt 5.1 i386 MSNMSGR 6.0.0602 MSMSGS %s",
+                     msn_session_get_username(session));
 }
 
 /**************************************************************************
@@ -287,30 +416,23 @@ ver_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 static void
 out_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	if (cmd->param_count == 0)
-		msn_session_set_error(cmdproc->session, -1, NULL);
-	else if (!g_ascii_strcasecmp(cmd->params[0], "OTH"))
-		msn_session_set_error(cmdproc->session, MSN_ERROR_SIGN_OTHER,
-							  NULL);
-	else if (!g_ascii_strcasecmp(cmd->params[0], "SSD"))
-		msn_session_set_error(cmdproc->session, MSN_ERROR_SERV_DOWN, NULL);
+    if (!g_ascii_strcasecmp(cmd->params[0], "OTH"))
+        msn_session_set_error(cmdproc->session, MSN_ERROR_SIGN_OTHER,
+                              NULL);
+    else if (!g_ascii_strcasecmp(cmd->params[0], "SSD"))
+        msn_session_set_error(cmdproc->session, MSN_ERROR_SERV_DOWN, NULL);
 }
 
 void
 msn_notification_close(MsnNotification *notification)
 {
-	MsnTransaction *trans;
+    g_return_if_fail(notification != NULL);
 
-	g_return_if_fail(notification != NULL);
-
-	if (!notification->in_use)
-		return;
-
-	trans = msn_transaction_new(notification->cmdproc, "OUT", NULL);
-	msn_transaction_set_saveable(trans, FALSE);
-	msn_cmdproc_send_trans(notification->cmdproc, trans);
-
-	msn_notification_disconnect(notification);
+    if (!notification->closed)
+    {
+        msn_cmdproc_send_quick (notification->cmdproc, "OUT", NULL, NULL);
+        pn_node_close (PN_NODE (notification->conn));
+    }
 }
 
 /**************************************************************************
@@ -319,1076 +441,713 @@ msn_notification_close(MsnNotification *notification)
 
 static void
 msg_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
+             size_t len)
 {
-	MsnMessage *msg;
+    MsnMessage *msg;
 
-	msg = msn_message_new_from_cmd(cmdproc->session, cmd);
+    msg = msn_message_new_from_cmd(cmd);
 
-	msn_message_parse_payload(msg, payload, len, MSG_LINE_DEM, MSG_BODY_DEM);
-	if (purple_debug_is_verbose())
-		msn_message_show_readable(msg, "Notification", TRUE);
+    msn_message_parse_payload(msg, payload, len);
+#ifdef PECAN_DEBUG_NS
+    msn_message_show_readable(msg, "Notification", TRUE);
+#endif
 
-	msn_cmdproc_process_msg(cmdproc, msg);
+    msn_cmdproc_process_msg(cmdproc, msg);
 
-	msn_message_unref(msg);
+    msn_message_unref(msg);
 }
 
 static void
 msg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	purple_debug_info("msn", "Processing MSG... \n");
+    /* NOTE: cmd is not always cmdproc->last_cmd, sometimes cmd is a queued
+     * command and we are processing it */
 
-	/* NOTE: cmd is not always cmdproc->last_cmd, sometimes cmd is a queued
-	 * command and we are processing it */
-	if (cmd->payload == NULL) {
-		cmdproc->last_cmd->payload_cb = msg_cmd_post;
-		cmd->payload_len = atoi(cmd->params[2]);
-	} else {
-		g_return_if_fail(cmd->payload_cb != NULL);
+    if (cmd->payload == NULL)
+    {
+        cmdproc->last_cmd->payload_cb  = msg_cmd_post;
+        cmd->payload_len = atoi(cmd->params[2]);
+    }
+    else
+    {
+        g_return_if_fail(cmd->payload_cb != NULL);
 
-#if 0 /* glib on win32 doesn't correctly support precision modifiers for a string */
-		purple_debug_info("msn", "MSG payload:{%.*s}\n", (guint)cmd->payload_len, cmd->payload);
-#endif
-		cmd->payload_cb(cmdproc, cmd, cmd->payload, cmd->payload_len);
-	}
-}
-
-/*send Message to Yahoo Messenger*/
-void
-msn_notification_send_uum(MsnSession *session, MsnMessage *msg)
-{
-	MsnCmdProc *cmdproc;
-	MsnTransaction *trans;
-	char *payload;
-	gsize payload_len;
-	int type;
-	MsnUser *user;
-	int network;
-
-	g_return_if_fail(msg != NULL);
-
-	cmdproc = session->notification->cmdproc;
-
-	payload = msn_message_gen_payload(msg, &payload_len);
-	type = msg->type;
-	user = msn_userlist_find_user(session->userlist, msg->remote_user);
-	if (user)
-		network = msn_user_get_network(user);
-	else
-		network = MSN_NETWORK_PASSPORT;
-
-	purple_debug_info("msn",
-		"send UUM, payload{%s}, strlen:%" G_GSIZE_FORMAT ", len:%" G_GSIZE_FORMAT "\n",
-		payload, strlen(payload), payload_len);
-
-	trans = msn_transaction_new(cmdproc, "UUM", "%s %d %d %" G_GSIZE_FORMAT,
-		msg->remote_user, network, type, payload_len);
-	msn_transaction_set_payload(trans, payload, strlen(payload));
-	msn_cmdproc_send_trans(cmdproc, trans);
-}
-
-/*Yahoo msg process*/
-static void
-ubm_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_info("msn", "Processing UBM... \n");
-
-	/* NOTE: cmd is not always cmdproc->last_cmd, sometimes cmd is a queued
-	 * command and we are processing it */
-	if (cmd->payload == NULL) {
-		cmdproc->last_cmd->payload_cb = msg_cmd_post;
-		cmd->payload_len = atoi(cmd->params[5]);
-	} else {
-		g_return_if_fail(cmd->payload_cb != NULL);
-
-		purple_debug_info("msn", "UBM payload:{%.*s}\n", (guint)(cmd->payload_len), cmd->payload);
-		msg_cmd_post(cmdproc, cmd, cmd->payload, cmd->payload_len);
-	}
+        cmd->payload_cb(cmdproc, cmd, cmd->payload, cmd->payload_len);
+    }
 }
 
 /**************************************************************************
  * Challenges
- *  we use MD5 to caculate the Challenges
  **************************************************************************/
+
 static void
 chl_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnTransaction *trans;
-	char buf[33];
+    MsnTransaction *trans;
+    gchar buf[32];
 
-	msn_handle_chl(cmd->params[1], buf);
-	trans = msn_transaction_new(cmdproc, "QRY", "%s 32", MSNP15_WLM_PRODUCT_ID);
+    pn_handle_challenge (cmd->params[1], "PROD0101{0RM?UBW", "CFHUR$52U_{VIX5T", buf);
 
-	msn_transaction_set_payload(trans, buf, 32);
+    /* trans = msn_transaction_new(cmdproc, "QRY", "%s 32", "PROD0038W!61ZTF9"); */
+    trans = msn_transaction_new (cmdproc, "QRY", "%s 32", "PROD0101{0RM?UBW");
 
-	msn_cmdproc_send_trans(cmdproc, trans);
+    msn_transaction_set_payload (trans, buf, 32);
+
+    msn_cmdproc_send_trans (cmdproc, trans);
 }
 
 /**************************************************************************
  * Buddy Lists
  **************************************************************************/
 
-typedef struct MsnFqyCbData {
-	MsnFqyCb cb;
-	gpointer data;
-} MsnFqyCbData;
-
-/* add contact to xmlnode */
 static void
-msn_add_contact_xml(xmlnode *mlNode, const char *passport, MsnListOp list_op, MsnNetwork networkId)
+adc_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	xmlnode *d_node,*c_node;
-	char **tokens;
-	const char *email,*domain;
-	char fmt_str[3];
+    MsnSession *session;
+    struct pn_contact *user = NULL;
+    const gchar *list = NULL;
+    const gchar *passport = NULL;
+    gchar *friendly = NULL;
+    const gchar *user_guid = NULL;
+    const gchar *group_guid = NULL;
+    MsnListId list_id;
+    guint i = 1;
 
-	g_return_if_fail(passport != NULL);
+    list = cmd->params[i++];
 
-	purple_debug_info("msn", "Passport: %s, type: %d\n", passport, networkId);
-	tokens = g_strsplit(passport, "@", 2);
-	email = tokens[0];
-	domain = tokens[1];
+    for (; i < cmd->param_count; i++)
+    {
+        const char *chopped_str;
 
-	if (email == NULL || domain == NULL) {
-		purple_debug_error("msn", "Invalid passport (%s) specified to add to contact xml.\n", passport);
-		g_strfreev(tokens);
-		g_return_if_reached();
-	}
+        chopped_str = cmd->params[i] + 2;
 
-	/*find a domain Node*/
-	for (d_node = xmlnode_get_child(mlNode, "d"); d_node;
-	     d_node = xmlnode_get_next_twin(d_node)) {
-		const char *attr = xmlnode_get_attrib(d_node,"n");
-		if (attr == NULL)
-			continue;
-		if (!strcmp(attr, domain))
-			break;
-	}
+        /* Check for Name/email. */
+        if (strncmp (cmd->params[i], "N=", 2) == 0)
+            passport = chopped_str;
+        /* Check for Friendlyname. */
+        else if (strncmp (cmd->params[i], "F=", 2) == 0)
+            friendly = pn_url_decode (chopped_str);
+        /* Check for Contact GUID. */
+        else if (strncmp (cmd->params[i], "C=", 2) == 0)
+            user_guid = chopped_str;
+        else
+            break;
+    }
 
-	if (d_node == NULL) {
-		/*domain not found, create a new domain Node*/
-		purple_debug_info("msn", "Didn't find existing domain node, adding one.\n");
-		d_node = xmlnode_new("d");
-		xmlnode_set_attrib(d_node, "n", domain);
-		xmlnode_insert_child(mlNode, d_node);
-	}
+    group_guid = cmd->params[i++];
 
-	/*create contact node*/
-	c_node = xmlnode_new("c");
-	xmlnode_set_attrib(c_node, "n", email);
+    session = cmdproc->session;
 
-	if (list_op != 0) {
-		purple_debug_info("msn", "list_op: %d\n", list_op);
-		g_snprintf(fmt_str, sizeof(fmt_str), "%d", list_op);
-		xmlnode_set_attrib(c_node, "l", fmt_str);
-	}
+    if (passport)
+        user = pn_contactlist_find_contact (session->contactlist, passport);
+    else if (user_guid)
+        user = pn_contactlist_find_contact_by_guid (session->contactlist, user_guid);
 
-	if (networkId != MSN_NETWORK_UNKNOWN) {
-		g_snprintf(fmt_str, sizeof(fmt_str), "%d", networkId);
-		/*mobile*/
-		/*type_str = g_strdup_printf("4");*/
-		xmlnode_set_attrib(c_node, "t", fmt_str);
-	}
+    if (user == NULL)
+    {
+        user = pn_contact_new (session->contactlist);
+        pn_contact_set_passport (user, passport);
+    }
 
-	xmlnode_insert_child(d_node, c_node);
+    list_id = msn_get_list_id(list);
 
-	g_strfreev(tokens);
-}
+    if (list_id == MSN_LIST_FL)
+        pn_contact_set_guid (user, user_guid);
 
-static void
-msn_notification_post_adl(MsnCmdProc *cmdproc, const char *payload, int payload_len)
-{
-	MsnTransaction *trans;
-	purple_debug_info("msn", "Sending ADL with payload: %s\n", payload);
-	trans = msn_transaction_new(cmdproc, "ADL", "%i", payload_len);
-	msn_transaction_set_payload(trans, payload, payload_len);
-	msn_cmdproc_send_trans(cmdproc, trans);
+    msn_got_add_contact(session, user, list_id, group_guid);
+
+    /* There is a user that must me moved to this group */
+    if (cmd->trans && cmd->trans->data)
+    {
+        MsnAddBuddy *data = cmd->trans->data;
+
+        msn_notification_add_buddy (session->notification, "FL", data->who,
+                                    user_guid, friendly, data->group_guid);
+
+        g_free (data->who);
+        g_free (data->group_guid);
+    }
+
+    pn_contact_update(user);
+
+    g_free (friendly);
 }
 
 static void
-msn_notification_post_rml(MsnCmdProc *cmdproc, const char *payload, int payload_len)
+adc_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
 {
-	MsnTransaction *trans;
-	purple_debug_info("msn", "Sending RML with payload: %s\n", payload);
-	trans = msn_transaction_new(cmdproc, "RML", "%i", payload_len);
-	msn_transaction_set_payload(trans, payload, payload_len);
-	msn_cmdproc_send_trans(cmdproc, trans);
-}
+    MsnSession *session;
+    PurpleAccount *account;
+    PurpleConnection *gc;
+    const char *list, *passport;
+    const char *reason;
+    char *msg = NULL;
+    char **params;
 
-void
-msn_notification_send_fqy(MsnSession *session,
-                          const char *payload, int payload_len,
-                          MsnFqyCb cb,
-                          gpointer cb_data)
-{
-	MsnTransaction *trans;
-	MsnCmdProc *cmdproc;
-	MsnFqyCbData *data;
+    session = cmdproc->session;
+    account = msn_session_get_user_data (session);
+    gc = purple_account_get_connection(account);
+    params = g_strsplit(trans->params, " ", 0);
 
-	cmdproc = session->notification->cmdproc;
+    list     = params[0];
+    passport = params[1];
 
-	data = g_new(MsnFqyCbData, 1);
-	data->cb = cb;
-	data->data = cb_data;
+    if (!strcmp(list, "FL"))
+        msg = g_strdup_printf(_("Unable to add user on %s (%s)"),
+                              purple_account_get_username(account),
+                              purple_account_get_protocol_name(account));
+    else if (!strcmp(list, "BL"))
+        msg = g_strdup_printf(_("Unable to block user on %s (%s)"),
+                              purple_account_get_username(account),
+                              purple_account_get_protocol_name(account));
+    else if (!strcmp(list, "AL"))
+        msg = g_strdup_printf(_("Unable to permit user on %s (%s)"),
+                              purple_account_get_username(account),
+                              purple_account_get_protocol_name(account));
 
-	trans = msn_transaction_new(cmdproc, "FQY", "%d", payload_len);
-	msn_transaction_set_payload(trans, payload, payload_len);
-	msn_transaction_set_data(trans, data);
-	msn_transaction_set_data_free(trans, g_free);
-	msn_cmdproc_send_trans(cmdproc, trans);
-}
+    reason = pn_error_to_string (error);
 
-static void
-update_contact_network(MsnSession *session, const char *passport, MsnNetwork network, gpointer unused)
-{
-	MsnUser *user;
+    if (msg != NULL)
+    {
+        purple_notify_error(gc, NULL, msg, reason);
+        g_free(msg);
+    }
 
-	if (network == MSN_NETWORK_UNKNOWN)
-	{
-		purple_debug_warning("msn",
-		                     "Ignoring user %s about which server knows nothing.\n",
-		                     passport);
-		/* Decrement the count for unknown results so that we'll continue login.
-		   Also, need to finish the login process here as well, because ADL OK
-		   will not be called. */
-		if (purple_debug_is_verbose())
-			purple_debug_info("msn", "ADL/FQY count is %d\n", session->adl_fqy);
-		if (--session->adl_fqy == 0)
-			msn_session_finish_login(session);
-		return;
-	}
+    if (!strcmp(list, "FL"))
+    {
+        PurpleBuddy *buddy;
 
-	/* TODO: Also figure out how to update membership lists */
-	user = msn_userlist_find_user(session->userlist, passport);
-	if (user) {
-		xmlnode *adl_node;
-		char *payload;
-		int payload_len;
+        buddy = purple_find_buddy(account, passport);
 
-		msn_user_set_network(user, network);
+        if (buddy != NULL)
+            purple_blist_remove_buddy(buddy);
+    }
 
-		adl_node = xmlnode_new("ml");
-		xmlnode_set_attrib(adl_node, "l", "1");
-		msn_add_contact_xml(adl_node, passport,
-		                    user->list_op & MSN_LIST_OP_MASK, network);
-		payload = xmlnode_to_str(adl_node, &payload_len);
-		msn_notification_post_adl(session->notification->cmdproc, payload, payload_len);
-		g_free(payload);
-		xmlnode_free(adl_node);
-	} else {
-		purple_debug_error("msn",
-		                   "Got FQY update for unknown user %s on network %d.\n",
-		                   passport, network);
-	}
-}
-
-/*dump contact info to NS*/
-void
-msn_notification_dump_contact(MsnSession *session)
-{
-	MsnUser *user;
-	GList *l;
-	xmlnode *adl_node;
-	xmlnode *fqy_node;
-	char *payload;
-	int payload_len;
-	int adl_count = 0;
-	int fqy_count = 0;
-	PurpleConnection *pc;
-	const char *display_name;
-
-	adl_node = xmlnode_new("ml");
-	adl_node->child = NULL;
-	xmlnode_set_attrib(adl_node, "l", "1");
-	fqy_node = xmlnode_new("ml");
-
-	/*get the userlist*/
-	for (l = session->userlist->users; l != NULL; l = l->next) {
-		user = l->data;
-
-		/* skip RL & PL during initial dump */
-		if (!(user->list_op & MSN_LIST_OP_MASK))
-			continue;
-
-		if (user->passport && !strcmp(user->passport, "messenger@microsoft.com"))
-			continue;
-
-		if ((user->list_op & MSN_LIST_OP_MASK & ~MSN_LIST_FL_OP)
-		 == (MSN_LIST_AL_OP | MSN_LIST_BL_OP)) {
-			/* The server will complain if we send it a user on both the
-			   Allow and Block lists. So assume they're on the Block list
-			   and remove them from the Allow list in the membership lists to
-			   stop this from happening again. */
-			purple_debug_warning("msn",
-			                     "User %s is on both Allow and Block list; "
-			                     "removing from Allow list.\n",
-			                     user->passport);
-			msn_user_unset_op(user, MSN_LIST_AL_OP);
-		}
-
-		if (user->networkid != MSN_NETWORK_UNKNOWN) {
-			if ((user->list_op & (MSN_LIST_OP_MASK | MSN_LIST_PL_OP)) == MSN_LIST_FL_OP) {
-				purple_debug_warning("msn",
-				                     "User %s is on neither Allow nor Block list, "
-				                     "and not Pending addition; "
-				                     "adding to Allow list.\n",
-				                     user->passport);
-				msn_user_set_op(user, MSN_LIST_AL_OP);
-			}
-
-			msn_add_contact_xml(adl_node, user->passport,
-			                    user->list_op & MSN_LIST_OP_MASK,
-			                    user->networkid);
-
-			/* each ADL command may contain up to 150 contacts */
-			if (++adl_count % 150 == 0) {
-				payload = xmlnode_to_str(adl_node, &payload_len);
-
-				/* ADL's are returned all-together */
-				session->adl_fqy++;
-				if (purple_debug_is_verbose())
-					purple_debug_info("msn", "Posting ADL, count is %d\n",
-					                  session->adl_fqy);
-
-				msn_notification_post_adl(session->notification->cmdproc,
-					payload, payload_len);
-
-				g_free(payload);
-				xmlnode_free(adl_node);
-
-				adl_node = xmlnode_new("ml");
-				adl_node->child = NULL;
-				xmlnode_set_attrib(adl_node, "l", "1");
-			}
-		} else {
-			/* FQY's are returned one-at-a-time */
-			session->adl_fqy++;
-			if (purple_debug_is_verbose())
-				purple_debug_info("msn", "Adding FQY address, count is %d\n",
-				                  session->adl_fqy);
-
-			msn_add_contact_xml(fqy_node, user->passport, 0, user->networkid);
-
-			/* each FQY command may contain up to 150 contacts, probably */
-			if (++fqy_count % 150 == 0) {
-				payload = xmlnode_to_str(fqy_node, &payload_len);
-
-				msn_notification_send_fqy(session, payload, payload_len,
-				                          update_contact_network, NULL);
-
-				g_free(payload);
-				xmlnode_free(fqy_node);
-				fqy_node = xmlnode_new("ml");
-			}
-		}
-	}
-
-	/* Send the rest, or just an empty one to let the server set us online */
-	if (adl_count == 0 || adl_count % 150 != 0) {
-		payload = xmlnode_to_str(adl_node, &payload_len);
-
-		/* ADL's are returned all-together */
-		session->adl_fqy++;
-		if (purple_debug_is_verbose())
-			purple_debug_info("msn", "Posting ADL, count is %d\n",
-			                  session->adl_fqy);
-
-		msn_notification_post_adl(session->notification->cmdproc, payload, payload_len);
-
-		g_free(payload);
-	}
-
-	if (fqy_count % 150 != 0) {
-		payload = xmlnode_to_str(fqy_node, &payload_len);
-
-		msn_notification_send_fqy(session, payload, payload_len,
-		                          update_contact_network, NULL);
-
-		g_free(payload);
-	}
-
-	xmlnode_free(adl_node);
-	xmlnode_free(fqy_node);
-
-	msn_session_activate_login_timeout(session);
-
-	pc = purple_account_get_connection(session->account);
-	display_name = purple_connection_get_display_name(pc);
-	if (display_name
-	    && strcmp(display_name,
-		      purple_account_get_username(session->account))) {
-		msn_set_public_alias(pc, display_name, NULL, NULL);
-	}
-
+    g_strfreev(params);
 }
 
 static void
-blp_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+adg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-}
+    MsnSession *session;
+    const gchar *group_guid;
+    char *group_name;
 
-static void
-adl_cmd_parse(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-		                         size_t len)
-{
-	xmlnode *root, *domain_node;
+    session = cmdproc->session;
 
-	purple_debug_misc("msn", "Parsing received ADL XML data\n");
+    group_guid = cmd->params[2];
 
-	g_return_if_fail(payload != NULL);
+    group_name = pn_url_decode(cmd->params[1]);
 
-	root = xmlnode_from_str(payload, (gssize) len);
+    if (strcmp(group_name, MSN_NULL_GROUP_NAME) == 0) {
+        pn_error("Invalid group name, ignoring");
+        goto leave;
+    }
 
-	if (root == NULL) {
-		purple_debug_info("msn", "Invalid XML in ADL!\n");
-		return;
-	}
-	for (domain_node = xmlnode_get_child(root, "d");
-	     domain_node;
-	     domain_node = xmlnode_get_next_twin(domain_node)) {
-		xmlnode *contact_node = NULL;
+    pn_group_new(session->contactlist, group_name, group_guid);
 
-		for (contact_node = xmlnode_get_child(domain_node, "c");
-		     contact_node;
-		     contact_node = xmlnode_get_next_twin(contact_node)) {
-			const gchar *list;
-			gint list_op = 0;
+    /* There is a user that must me moved to this group */
+    if (cmd->trans && cmd->trans->data)
+    {
+        /* pn_contactlist_move_buddy(); */
+        struct pn_contact_list *contactlist = cmdproc->session->contactlist;
+        MsnMoveBuddy *data = cmd->trans->data;
 
-			list = xmlnode_get_attrib(contact_node, "l");
-			if (list != NULL) {
-				list_op = atoi(list);
-			}
+        pn_contactlist_add_buddy(contactlist, data->who, MSN_LIST_FL, group_name);
 
-			if (list_op & MSN_LIST_RL_OP) {
-				/* someone is adding us */
-				msn_get_contact_list(cmdproc->session, MSN_PS_PENDING_LIST, NULL);
-			}
-		}
-	}
+        if (data->old_group_name != NULL)
+        {
+            pn_contactlist_rem_buddy(contactlist, data->who, MSN_LIST_FL, data->old_group_name);
+            g_free(data->old_group_name);
+        }
 
-	xmlnode_free(root);
-}
+        g_free(data->who);
+        g_free (data);
+    }
 
-static void
-adl_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	MsnSession *session;
-
-	g_return_if_fail(cmdproc != NULL);
-	g_return_if_fail(cmdproc->session != NULL);
-	g_return_if_fail(cmdproc->last_cmd != NULL);
-	g_return_if_fail(cmd != NULL);
-
-	session = cmdproc->session;
-
-	if (!strcmp(cmd->params[1], "OK")) {
-		/* ADL ack */
-		if (purple_debug_is_verbose())
-			purple_debug_info("msn", "ADL ACK, count is %d\n",
-			                  session->adl_fqy);
-		if (--session->adl_fqy == 0)
-			msn_session_finish_login(session);
-	} else {
-		cmdproc->last_cmd->payload_cb = adl_cmd_parse;
-		cmd->payload_len = atoi(cmd->params[1]);
-	}
-
-	return;
-}
-
-static void
-adl_error_parse(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload, size_t len)
-{
-	MsnSession *session;
-	PurpleAccount *account;
-	PurpleConnection *gc;
-	int error = GPOINTER_TO_INT(cmd->payload_cbdata);
-
-	session = cmdproc->session;
-	account = session->account;
-	gc = purple_account_get_connection(account);
-
-	if (error == 241) {
-		/* khc: some googling suggests that error 241 means the buddy is somehow
-		   in the local list, but not the server list, and that we should add
-		   those buddies to the addressbook. For now I will just notify the user
-		   about the raw payload, because I am lazy */
-		xmlnode *adl = xmlnode_from_str(payload, len);
-		GString *emails = g_string_new(NULL);
-
-		xmlnode *domain = xmlnode_get_child(adl, "d");
-		while (domain) {
-			const char *domain_str = xmlnode_get_attrib(domain, "n");
-			xmlnode *contact = xmlnode_get_child(domain, "c");
-			while (contact) {
-				g_string_append_printf(emails, "%s@%s\n",
-					xmlnode_get_attrib(contact, "n"), domain_str);
-				contact = xmlnode_get_next_twin(contact);
-			}
-			domain = xmlnode_get_next_twin(domain);
-		}
-
-		purple_notify_error(gc, NULL,
-			_("The following users are missing from your addressbook"),
-			emails->str);
-		g_string_free(emails, TRUE);
-		xmlnode_free(adl);
-	}
-	else
-	{
-		char *adl = g_strndup(payload, len);
-		char *reason = g_strdup_printf(_("Unknown error (%d): %s"),
-			error, adl);
-		g_free(adl);
-
-		purple_notify_error(gc, NULL, _("Unable to add user"), reason);
-		g_free(reason);
-	}
-}
-
-static void
-adl_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
-{
-	MsnSession *session;
-	PurpleAccount *account;
-	PurpleConnection *gc;
-	MsnCommand *cmd = cmdproc->last_cmd;
-
-	session = cmdproc->session;
-	account = session->account;
-	gc = purple_account_get_connection(account);
-
-	purple_debug_error("msn", "ADL error\n");
-	if (cmd->param_count > 1) {
-		cmd->payload_cb = adl_error_parse;
-		cmd->payload_len = atoi(cmd->params[1]);
-		cmd->payload_cbdata = GINT_TO_POINTER(error);
-	} else {
-		char *reason = g_strdup_printf(_("Unknown error (%d)"), error);
-		purple_notify_error(gc, NULL, _("Unable to add user"), reason);
-		g_free(reason);
-	}
-}
-
-static void
-rml_error_parse(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload, size_t len)
-{
-	MsnSession *session;
-	PurpleAccount *account;
-	PurpleConnection *gc;
-	char *adl, *reason;
-	int error = GPOINTER_TO_INT(cmd->payload_cbdata);
-
-	session = cmdproc->session;
-	account = session->account;
-	gc = purple_account_get_connection(account);
-
-	adl = g_strndup(payload, len);
-	reason = g_strdup_printf(_("Unknown error (%d): %s"),
-		error, adl);
-	g_free(adl);
-
-	purple_notify_error(gc, NULL, _("Unable to remove user"), reason);
-	g_free(reason);
-}
-
-static void
-rml_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
-{
-	MsnSession *session;
-	PurpleAccount *account;
-	PurpleConnection *gc;
-	MsnCommand *cmd = cmdproc->last_cmd;
-
-	session = cmdproc->session;
-	account = session->account;
-	gc = purple_account_get_connection(account);
-
-	purple_debug_error("msn", "RML error\n");
-	if (cmd->param_count > 1) {
-		cmd->payload_cb = rml_error_parse;
-		cmd->payload_len = atoi(cmd->params[1]);
-		cmd->payload_cbdata = GINT_TO_POINTER(error);
-	} else {
-		char *reason = g_strdup_printf(_("Unknown error (%d)"), error);
-		purple_notify_error(gc, NULL, _("Unable to remove user"), reason);
-		g_free(reason);
-	}
-}
-
-static void
-fqy_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	MsnSession *session;
-	xmlnode *ml, *d, *c;
-	const char *domain;
-	const char *local;
-	const char *type;
-	char *passport;
-	MsnNetwork network = MSN_NETWORK_PASSPORT;
-
-	session = cmdproc->session;
-
-	/* FQY response:
-	    <ml><d n="domain.com"><c n="local-node" t="network" /></d></ml> */
-	ml = xmlnode_from_str(payload, len);
-	for (d = xmlnode_get_child(ml, "d");
-	     d != NULL;
-	     d = xmlnode_get_next_twin(d)) {
-		domain = xmlnode_get_attrib(d, "n");
-		for (c = xmlnode_get_child(d, "c");
-		     c != NULL;
-		     c = xmlnode_get_next_twin(c)) {
-			local = xmlnode_get_attrib(c, "n");
-			type = xmlnode_get_attrib(c, "t");
-
-			passport = g_strdup_printf("%s@%s", local, domain);
-
-			if (g_ascii_isdigit(cmd->command[0]))
-				network = MSN_NETWORK_UNKNOWN;
-			else if (type != NULL)
-				network = (MsnNetwork)strtoul(type, NULL, 10);
-
-			purple_debug_info("msn", "FQY response says %s is from network %d\n",
-			                  passport, network);
-			if (cmd->trans->data) {
-				MsnFqyCbData *fqy_data = cmd->trans->data;
-				fqy_data->cb(session, passport, network, fqy_data->data);
-				/* Don't free fqy_data yet since the server responds to FQY multiple times.
-				   It will be freed when cmd->trans is freed. */
-			}
-
-			g_free(passport);
-		}
-	}
-
-	xmlnode_free(ml);
-}
-
-static void
-fqy_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
-{
-	MsnCommand *cmd = cmdproc->last_cmd;
-
-	purple_debug_warning("msn", "FQY error %d\n", error);
-	if (cmd->param_count > 1) {
-		cmd->payload_cb = fqy_cmd_post;
-		cmd->payload_len = atoi(cmd->params[1]);
-		cmd->payload_cbdata = GINT_TO_POINTER(error);
-	}
-#if 0
-	/* If the server didn't send us a corresponding email address for this
-	   FQY error, it's probably going to disconnect us. So it isn't necessary
-	   to tell the handler about it. */
-	else if (trans->data)
-		((MsnFqyCb)trans->data)(session, NULL, MSN_NETWORK_UNKNOWN, NULL);
-#endif
-}
-
-static void
-fqy_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_info("msn", "Process FQY\n");
-	cmdproc->last_cmd->payload_cb = fqy_cmd_post;
-	cmd->payload_len = atoi(cmd->params[1]);
-}
-
-static void
-rml_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	if (payload != NULL)
-		purple_debug_info("msn", "Received RML:\n%s\n", payload);
-}
-
-static void
-rml_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_info("msn", "Process RML\n");
-	cmd->payload_len = atoi(cmd->params[1]);
-	cmdproc->last_cmd->payload_cb = rml_cmd_post;
+leave:
+    g_free (group_name);
 }
 
 static void
 qng_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	/* TODO: Call PNG after the timeout specified. */
+    MsnNotification *ns = cmdproc->data;
+    pn_timer_stop(ns->alive_timer);
+    pn_timer_start(cmdproc->timer, atoi(cmd->params[0]));
 }
-
 
 static void
 fln_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnUser *user;
-	char *passport;
-	int networkid;
+    struct pn_contact *user;
 
-	/* Tell libpurple that the user has signed off */
-	msn_parse_user(cmd->params[0], &passport, &networkid);
-	user = msn_userlist_find_user(cmdproc->session->userlist, passport);
-	msn_user_set_state(user, NULL);
-	msn_user_update(user);
+    user = pn_contactlist_find_contact(cmdproc->session->contactlist, cmd->params[0]);
+    pn_contact_set_state(user, NULL);
+    pn_contact_update(user);
 
-	g_free(passport);
+#if defined(PECAN_CVR)
+    g_hash_table_remove(cmdproc->session->links, cmd->params[0]);
+#endif /* defined(PECAN_CVR) */
 }
 
 static void
 iln_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session;
-	MsnUser *user;
-	MsnObject *msnobj = NULL;
-	unsigned long clientid, extcaps;
-	char *extcap_str;
-	int networkid = 0;
-	const char *state, *passport;
-	char *friendly;
+    MsnSession *session;
+    struct pn_contact *user;
+    const char *state, *passport;
+    gchar *friendly;
 
-	session = cmdproc->session;
+    session = cmdproc->session;
 
-	state    = cmd->params[1];
-	passport = cmd->params[2];
+    state    = cmd->params[1];
+    passport = cmd->params[2];
+    friendly = pn_url_decode(cmd->params[3]);
 
-	user = msn_userlist_find_user(session->userlist, passport);
-	if (user == NULL)
-		/* Where'd this come from? */
-		return;
+    user = pn_contactlist_find_contact(session->contactlist, passport);
 
-	if (cmd->param_count == 8) {
-		/* Yahoo! Buddy, looks like */
-		networkid = atoi(cmd->params[3]);
-		friendly = g_strdup(purple_url_decode(cmd->params[4]));
-		clientid = strtoul(cmd->params[5], &extcap_str, 10);
-		if (extcap_str && *extcap_str)
-			extcaps = strtoul(extcap_str+1, NULL, 10);
-		else
-			extcaps = 0;
+    pn_contact_set_state(user, state);
+    pn_contact_set_friendly_name(user, friendly);
 
-		/* cmd->params[7] seems to be a URL to a Yahoo! icon:
-				https://sec.yimg.com/i/us/nt/b/purpley.1.0.png
-		   ... and it's purple, HAH!
-		*/
-	} else if (cmd->param_count == 7) {
-		/* MSNP14+ with Display Picture object */
-		networkid = atoi(cmd->params[3]);
-		friendly = g_strdup(purple_url_decode(cmd->params[4]));
-		clientid = strtoul(cmd->params[5], &extcap_str, 10);
-		if (extcap_str && *extcap_str)
-			extcaps = strtoul(extcap_str+1, NULL, 10);
-		else
-			extcaps = 0;
-		msnobj = msn_object_new_from_string(purple_url_decode(cmd->params[6]));
-	} else if (cmd->param_count == 6) {
-		/* Yes, this is 5. The friendly name could start with a number,
-		   but the display picture object can't... */
-		if (isdigit(cmd->params[5][0])) {
-			/* MSNP14 without Display Picture object */
-			networkid = atoi(cmd->params[3]);
-			friendly = g_strdup(purple_url_decode(cmd->params[4]));
-			clientid = strtoul(cmd->params[5], &extcap_str, 10);
-			if (extcap_str && *extcap_str)
-				extcaps = strtoul(extcap_str+1, NULL, 10);
-			else
-				extcaps = 0;
-		} else {
-			/* MSNP8+ with Display Picture object */
-			friendly = g_strdup(purple_url_decode(cmd->params[3]));
-			clientid = strtoul(cmd->params[4], &extcap_str, 10);
-			if (extcap_str && *extcap_str)
-				extcaps = strtoul(extcap_str+1, NULL, 10);
-			else
-				extcaps = 0;
-			msnobj = msn_object_new_from_string(purple_url_decode(cmd->params[5]));
-		}
-	} else if (cmd->param_count == 5) {
-		/* MSNP8+ without Display Picture object */
-		friendly = g_strdup(purple_url_decode(cmd->params[3]));
-		clientid = strtoul(cmd->params[4], &extcap_str, 10);
-		if (extcap_str && *extcap_str)
-			extcaps = strtoul(extcap_str+1, NULL, 10);
-		else
-			extcaps = 0;
-	} else {
-		purple_debug_warning("msn", "Received ILN with unknown number of parameters.\n");
-		return;
-	}
+    if (cmd->param_count >= 5)
+    {
+        gulong client_id;
+        client_id = atol (cmd->params[4]);
+        pn_contact_set_client_id (user, client_id);
+    }
 
-	if (msn_user_set_friendly_name(user, friendly)) {
-		msn_update_contact(session, passport, MSN_UPDATE_DISPLAY, friendly);
-	}
-	g_free(friendly);
+#if defined(PECAN_CVR)
+    if (msn_session_get_bool (session, "use_userdisplay"))
+    {
+        if (cmd->param_count == 6)
+        {
+            struct pn_msnobj *obj;
+            gchar *tmp;
+            tmp = pn_url_decode (cmd->params[5]);
+            obj = pn_msnobj_new_from_string (tmp);
+            pn_contact_set_object(user, obj);
+            g_free (tmp);
+        }
+    }
+#endif /* defined(PECAN_CVR) */
 
-	msn_user_set_object(user, msnobj);
+    pn_contact_update(user);
 
-	user->mobile = (clientid & MSN_CAP_MOBILE_ON) || (user->extinfo && user->extinfo->phone_mobile && user->extinfo->phone_mobile[0] == '+');
-	msn_user_set_clientid(user, clientid);
-	msn_user_set_extcaps(user, extcaps);
-	msn_user_set_network(user, networkid);
-
-	msn_user_set_state(user, state);
-	msn_user_update(user);
+    g_free (friendly);
 }
 
 static void
 ipg_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload, size_t len)
 {
-	PurpleConnection *gc;
-	MsnUserList *userlist;
-	const char *who = NULL;
-	char *text = NULL;
-	const char *id = NULL;
-	xmlnode *payloadNode, *from, *msg, *textNode;
-
-	purple_debug_misc("msn", "Incoming Page: {%s}\n", payload);
-
-	userlist = cmdproc->session->userlist;
-	gc = purple_account_get_connection(cmdproc->session->account);
-
-	/* payload looks like this:
-	   <?xml version="1.0"?>
-	   <NOTIFICATION id="0" siteid="111100400" siteurl="http://mobile.msn.com/">
-	     <TO name="passport@example.com">
-	       <VIA agent="mobile"/>
-	     </TO>
-	     <FROM name="tel:+XXXXXXXXXXX"/>
-		 <MSG pri="1" id="1">
-		   <CAT Id="110110001"/>
-		   <ACTION url="2wayIM.asp"/>
-		   <SUBSCR url="2wayIM.asp"/>
-		   <BODY lcid="1033">
-		     <TEXT>Message was here</TEXT>
-		   </BODY>
-		 </MSG>
-	   </NOTIFICATION>
-	*/
-
-	/* This is the payload if your message was too long:
-	   <NOTIFICATION id="TrID" siteid="111100400" siteurl="http://mobile.msn.com/">
-	     <TO name="passport@example.com">
-	       <VIA agent="mobile"/>
-	     </TO>
-	     <FROM name="tel:+XXXXXXXXXXX"/>
-	     <MSG pri="1" id="407">
-	       <CAT Id="110110001"/>
-	       <ACTION url="2wayIM.asp"/>
-	       <SUBSCR url="2wayIM.asp"/>
-	       <BODY lcid="1033">
-	         <TEXT></TEXT>
-	       </BODY>
-	     </MSG>
-	   </NOTIFICATION>
-	*/
-
-	payloadNode = xmlnode_from_str(payload, len);
-	if (!payloadNode)
-		return;
-
-	if (!(from = xmlnode_get_child(payloadNode, "FROM")) ||
-		!(msg = xmlnode_get_child(payloadNode, "MSG")) ||
-		!(textNode = xmlnode_get_child(msg, "BODY/TEXT"))) {
-		xmlnode_free(payloadNode);
-		return;
-	}
-
-	who = xmlnode_get_attrib(from, "name");
-	if (!who) return;
-
-	text = xmlnode_get_data(textNode);
-
-	/* Match number to user's mobile number, FROM is a phone number if the
-	   other side page you using your phone number */
-	if (!strncmp(who, "tel:+", 5)) {
-		MsnUser *user =
-			msn_userlist_find_user_with_mobile_phone(userlist, who + 4);
-
-		if (user && user->passport)
-			who = user->passport;
-	}
-
-	id = xmlnode_get_attrib(msg, "id");
-
-	if (id && strcmp(id, "1")) {
-		PurpleConversation *conv
-			= purple_find_conversation_with_account(PURPLE_CONV_TYPE_ANY,
-			                                        who, gc->account);
-		if (conv != NULL) {
-			const char *error;
-			if (!strcmp(id, "407"))
-				error = _("Mobile message was not sent because it was too long.");
-			else
-				error = _("Mobile message was not sent because an unknown error occurred.");
-
-			purple_conversation_write(conv, NULL, error,
-			                          PURPLE_MESSAGE_ERROR, time(NULL));
-
-			if ((id = xmlnode_get_attrib(payloadNode, "id")) != NULL) {
-				unsigned int trId = atol(id);
-				MsnTransaction *trans;
-
-				trans = msn_history_find(cmdproc->history, trId);
-				if (trans) {
-					MsnMessage *msg = (MsnMessage *)trans->data;
-
-					if (msg) {
-						char *body_str = msn_message_to_string(msg);
-						char *body_enc = g_markup_escape_text(body_str, -1);
-
-						purple_conversation_write(conv, NULL, body_enc,
-					                          	PURPLE_MESSAGE_RAW, time(NULL));
-
-						g_free(body_str);
-						g_free(body_enc);
-						msn_message_unref(msg);
-						trans->data = NULL;
-					}
-				}
-			}
-		}
-	} else {
-		serv_got_im(gc, who, text, 0, time(NULL));
-	}
-
-	g_free(text);
-	xmlnode_free(payloadNode);
+    pn_info ("incoming page: [%s]", payload);
 }
 
 static void
 ipg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	cmd->payload_len = atoi(cmd->params[0]);
-	cmdproc->last_cmd->payload_cb = ipg_cmd_post;
+    cmd->payload_len = atoi(cmd->params[0]);
+    cmdproc->last_cmd->payload_cb = ipg_cmd_post;
 }
 
 static void
 nln_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session;
-	MsnUser *user;
-	MsnObject *msnobj;
-	unsigned long clientid, extcaps;
-	char *extcap_str;
-	char *passport;
-	int networkid;
-	const char *state, *friendly;
+    MsnSession *session;
+    struct pn_contact *user;
+    unsigned long clientid;
+    const char *state, *passport;
+    gchar *friendly;
 
-	session = cmdproc->session;
+    session = cmdproc->session;
 
-	state = cmd->params[0];
-	msn_parse_user(cmd->params[1], &passport, &networkid);
-	friendly = purple_url_decode(cmd->params[2]);
+    state    = cmd->params[0];
+    passport = cmd->params[1];
+    friendly = pn_url_decode(cmd->params[2]);
 
-	user = msn_userlist_find_user(session->userlist, passport);
-	if (user == NULL) return;
+    user = pn_contactlist_find_contact(session->contactlist, passport);
 
-	if (msn_user_set_friendly_name(user, friendly) && user != session->user)
-	{
-		msn_update_contact(session, passport, MSN_UPDATE_DISPLAY, friendly);
-	}
+    if (!user)
+    {
+        pn_error ("unknown user: passport=[%s]", passport);
+        return;
+    }
 
-	if (cmd->param_count == 5)
-	{
-		msnobj = msn_object_new_from_string(purple_url_decode(cmd->params[4]));
-		msn_user_set_object(user, msnobj);
-	}
-	else
-	{
-		msn_user_set_object(user, NULL);
-	}
+    pn_contact_set_friendly_name(user, friendly);
 
-	clientid = strtoul(cmd->params[3], &extcap_str, 10);
-	if (extcap_str && *extcap_str)
-		extcaps = strtoul(extcap_str+1, NULL, 10);
-	else
-		extcaps = 0;
+    clientid = strtoul (cmd->params[3], NULL, 10);
+    user->mobile = (clientid & PN_CLIENT_CAP_MSNMOBILE);
 
-	user->mobile = (clientid & MSN_CAP_MOBILE_ON) || (user->extinfo && user->extinfo->phone_mobile && user->extinfo->phone_mobile[0] == '+');
+    pn_contact_set_state(user, state);
 
-	msn_user_set_clientid(user, clientid);
-	msn_user_set_extcaps(user, extcaps);
-	msn_user_set_network(user, networkid);
+#if defined(PECAN_CVR)
+    if (msn_session_get_bool (session, "use_userdisplay"))
+    {
+        if (cmd->param_count == 5)
+        {
+            struct pn_msnobj *obj;
+            gchar *tmp;
+            tmp = pn_url_decode(cmd->params[4]);
+            obj = pn_msnobj_new_from_string(tmp);
+            pn_contact_set_object(user, obj);
+            g_free (tmp);
+        }
+        else
+        {
+            pn_contact_set_object(user, NULL);
+        }
+    }
+#endif /* defined(PECAN_CVR) */
 
-	msn_user_set_state(user, state);
-	msn_user_update(user);
+    pn_contact_update(user);
 
-	g_free(passport);
+    /* store the friendly name on the server. */
+    if (!msn_session_get_bool (session, "use_server_alias"))
+        msn_cmdproc_send (cmdproc, "SBP", "%s %s %s", pn_contact_get_guid (user), "MFN", cmd->params[2]);
+
+    g_free (friendly);
 }
 
-#if 0
+static void
+contact_update (struct pn_contact *contact,
+                gpointer user_data)
+{
+    if (contact->status == PN_STATUS_OFFLINE)
+        return;
+
+#if defined(PECAN_CVR)
+    pn_contact_update_object (contact);
+#endif /* defined(PECAN_CVR) */
+}
+
 static void
 chg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	char *state = cmd->params[1];
-	int state_id = 0;
+    struct pn_contact *user;
+    PecanStatus old_status;
 
-	if (!strcmp(state, "NLN"))
-		state_id = MSN_ONLINE;
-	else if (!strcmp(state, "BSY"))
-		state_id = MSN_BUSY;
-	else if (!strcmp(state, "IDL"))
-		state_id = MSN_IDLE;
-	else if (!strcmp(state, "BRB"))
-		state_id = MSN_BRB;
-	else if (!strcmp(state, "AWY"))
-		state_id = MSN_AWAY;
-	else if (!strcmp(state, "PHN"))
-		state_id = MSN_PHONE;
-	else if (!strcmp(state, "LUN"))
-		state_id = MSN_LUNCH;
-	else if (!strcmp(state, "HDN"))
-		state_id = MSN_HIDDEN;
+    user = msn_session_get_contact (cmdproc->session);
+    old_status = user->status;
+    pn_contact_set_state (user, cmd->params[1]);
 
-	cmdproc->session->state = state_id;
+    if (old_status == PN_STATUS_HIDDEN)
+    {
+        /* now we are able to send messages and do p2p */
+
+        pn_contactlist_foreach_contact (cmdproc->session->contactlist, contact_update, NULL);
+    }
 }
-#endif
-
 
 static void
 not_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload, size_t len)
 {
-#if 0
-	MSN_SET_PARAMS("NOT %d\r\n%s", cmdproc->servconn->payload, payload);
-	purple_debug_misc("msn", "Notification: {%s}\n", payload);
-#endif
+    pn_info ("incoming notification: [%s]", payload);
 }
 
 static void
 not_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	cmd->payload_len = atoi(cmd->params[0]);
-	cmdproc->last_cmd->payload_cb = not_cmd_post;
+    cmd->payload_len = atoi(cmd->params[0]);
+    cmdproc->last_cmd->payload_cb = not_cmd_post;
+}
+
+#if 0
+static void
+rea_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+{
+    MsnSession *session;
+    const char *who;
+    const char *alias;
+
+    session = cmdproc->session;
+    who = cmd->params[2];
+    alias = purple_url_decode(cmd->params[3]);
+
+    if (strcmp(who, purple_account_get_username (session->account)) == 0)
+    {
+        /* This is for us. */
+        PurpleConnection *gc;
+        gc = session->account->gc;
+        purple_connection_set_display_name(gc, alias);
+    }
+    else
+    {
+        /* This is for a buddy. */
+        struct pn_contact *user;
+        user = pn_contactlist_find_contact(session->contactlist, who);
+        if (user)
+        {
+            pn_contact_set_store_name(user, alias);
+        }
+        else
+        {
+            pn_error ("unknown user: who=[%s]", who);
+            return;
+        }
+    }
+}
+#endif
+
+static void
+sbp_cmd (MsnCmdProc *cmdproc,
+         MsnCommand *cmd)
+{
+    MsnSession *session;
+    const gchar *contact_guid;
+    const gchar *type;
+    const gchar *value;
+    struct pn_contact *contact;
+
+    session = cmdproc->session;
+    contact_guid = cmd->params[1];
+    type = cmd->params[2];
+    value = cmd->params[3];
+
+    contact = pn_contactlist_find_contact_by_guid (session->contactlist, contact_guid);
+
+    if (contact)
+    {
+        if (strcmp (type, "MFN") == 0)
+        {
+            gchar *tmp;
+            tmp = pn_url_decode (value);
+            if (msn_session_get_bool (session, "use_server_alias"))
+                pn_contact_set_store_name (contact, tmp);
+            g_free (tmp);
+        }
+    }
 }
 
 static void
 prp_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session = cmdproc->session;
-	const char *type, *value;
+    MsnSession *session = cmdproc->session;
+    PurpleConnection *gc;
+    PurpleAccount *account;
+    const gchar *type, *value;
+    struct pn_contact *user;
 
-	g_return_if_fail(cmd->param_count >= 3);
+    g_return_if_fail(cmd->param_count >= 3);
 
-	type = cmd->params[2];
+    account = msn_session_get_user_data (session);
+    gc = purple_account_get_connection (account);
 
-	if (cmd->param_count == 4)
-	{
-		value = cmd->params[3];
-		if (!strcmp(type, "PHH"))
-			msn_user_set_home_phone(session->user, purple_url_decode(value));
-		else if (!strcmp(type, "PHW"))
-			msn_user_set_work_phone(session->user, purple_url_decode(value));
-		else if (!strcmp(type, "PHM"))
-			msn_user_set_mobile_phone(session->user, purple_url_decode(value));
-	}
-	else
-	{
-		if (!strcmp(type, "PHH"))
-			msn_user_set_home_phone(session->user, NULL);
-		else if (!strcmp(type, "PHW"))
-			msn_user_set_work_phone(session->user, NULL);
-		else if (!strcmp(type, "PHM"))
-			msn_user_set_mobile_phone(session->user, NULL);
-	}
+    type = cmd->params[1];
+    user = msn_session_get_contact (session);
+
+    if (cmd->param_count == 3)
+    {
+        gchar *tmp;
+        value = cmd->params[2];
+        tmp = pn_url_decode (value);
+        if (!strcmp(type, "PHH"))
+            pn_contact_set_home_phone(user, tmp);
+        else if (!strcmp(type, "PHW"))
+            pn_contact_set_work_phone(user, tmp);
+        else if (!strcmp(type, "PHM"))
+            pn_contact_set_mobile_phone(user, tmp);
+        else if (!strcmp(type, "MFN"))
+            purple_connection_set_display_name(gc, tmp);
+        g_free (tmp);
+    }
+    else
+    {
+        if (!strcmp(type, "PHH"))
+            pn_contact_set_home_phone(user, NULL);
+        else if (!strcmp(type, "PHW"))
+            pn_contact_set_work_phone(user, NULL);
+        else if (!strcmp(type, "PHM"))
+            pn_contact_set_mobile_phone(user, NULL);
+    }
+}
+
+static void
+reg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+{
+    MsnSession *session;
+    const gchar *group_guid;
+    char *group_name;
+
+    session = cmdproc->session;
+    group_guid = cmd->params[1];
+    group_name = pn_url_decode(cmd->params[2]);
+
+    pn_contactlist_rename_group_id(session->contactlist, group_guid, group_name);
+
+    g_free (group_name);
+}
+
+static void
+reg_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
+{
+    const gchar *group_guid;
+    char **params;
+
+    params = g_strsplit(trans->params, " ", 0);
+
+    group_guid = params[0];
+
+    group_error_helper(cmdproc->session, _("Unable to rename group"), group_guid, error);
+
+    g_strfreev(params);
+}
+
+static void
+rem_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+{
+    MsnSession *session;
+    struct pn_contact *user;
+    const char *list;
+    const gchar *user_id; /* passport or guid */
+    MsnListId list_id;
+    const gchar *group_guid;
+
+    session = cmdproc->session;
+    list = cmd->params[1];
+    user_id = cmd->params[2];
+
+    if (strcmp (list, "FL") == 0)
+        user = pn_contactlist_find_contact_by_guid (session->contactlist, user_id);
+    else
+        user = pn_contactlist_find_contact (session->contactlist, user_id);
+
+    g_return_if_fail(user != NULL);
+
+    list_id = msn_get_list_id(list);
+
+    if (cmd->param_count == 4)
+        group_guid = cmd->params[3];
+    else
+        group_guid = NULL;
+
+    msn_got_rem_contact(session, user, list_id, group_guid);
+    pn_contact_update(user);
+}
+
+static void
+rmg_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+{
+    MsnSession *session;
+    const gchar *group_guid;
+
+    session = cmdproc->session;
+    group_guid = cmd->params[1];
+
+    pn_contactlist_remove_group_id(session->contactlist, group_guid);
+}
+
+static void
+rmg_error(MsnCmdProc *cmdproc, MsnTransaction *trans, int error)
+{
+    const gchar *group_guid;
+    char **params;
+
+    params = g_strsplit(trans->params, " ", 0);
+
+    group_guid = params[0];
+
+    group_error_helper(cmdproc->session, _("Unable to delete group"), group_guid, error);
+
+    g_strfreev(params);
+}
+
+static void
+syn_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+{
+    MsnSession *session;
+    MsnSync *sync;
+    int total_users;
+
+    session = cmdproc->session;
+
+    if (cmd->param_count == 2)
+    {
+        /*
+         * This can happen if we sent a SYN with an up-to-date
+         * buddy list revision, but we send 0 to get a full list.
+         * So, error out.
+         */
+
+        msn_session_set_error(cmdproc->session, MSN_ERROR_BAD_BLIST, NULL);
+        return;
+    }
+
+    total_users  = atoi(cmd->params[3]);
+
+    if (total_users > 0)
+    {
+        sync = msn_sync_new(session);
+        sync->total_users = total_users;
+        sync->old_cbs_table = cmdproc->cbs_table;
+
+        session->sync = sync;
+        cmdproc->cbs_table = sync->cbs_table;
+    }
+    else
+    {
+        msn_session_finish_login (session);
+    }
+}
+
+static void
+ubx_cmd_post (MsnCmdProc *cmdproc,
+              MsnCommand *cmd,
+              gchar *payload,
+              gsize len)
+{
+    MsnSession *session;
+    struct pn_contact *contact;
+    const gchar *passport;
+
+    session = cmdproc->session;
+
+    passport = cmd->params[0];
+    contact = pn_contactlist_find_contact (session->contactlist, passport);
+
+    if (contact)
+    {
+        gchar *psm = NULL, *current_media = NULL;
+        const gchar *start;
+        const gchar *end;
+
+        start = g_strstr_len (payload, len, "<PSM>");
+        if (start)
+        {
+            start += 5;
+            end = g_strstr_len (start, len - (start - payload), "</PSM>");
+
+            /* check that the closing <PSM> tag is there, and that the PSM
+             * isn't empty */
+            if (end > start)
+                psm = g_strndup (start, end - start);
+        }
+
+        pn_contact_set_personal_message (contact, psm);
+        g_free (psm);
+
+        start = g_strstr_len (payload, len, "<CurrentMedia>");
+        if (start)
+        {
+            start += 14;
+            end = g_strstr_len (start, len - (start - payload), "</CurrentMedia>");
+
+            if (end > start)
+                current_media = g_strndup (start, end - start);
+        }
+
+        pn_contact_set_current_media (contact, current_media);
+        g_free (current_media);
+
+        pn_contact_update (contact);
+    }
+}
+
+static void
+ubx_cmd (MsnCmdProc *cmdproc,
+         MsnCommand *cmd)
+{
+    cmdproc->last_cmd->payload_cb = ubx_cmd_post;
+    cmd->payload_len = atoi (cmd->params[1]);
 }
 
 /**************************************************************************
@@ -1396,55 +1155,102 @@ prp_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
  **************************************************************************/
 
 static void
-url_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
+url_cmd (MsnCmdProc *cmdproc,
+         MsnCommand *cmd)
 {
-	MsnSession *session;
-	PurpleConnection *gc;
-	PurpleAccount *account;
-	const char *rru;
-	const char *url;
-	PurpleCipherContext *cipher;
-	gchar creds[33];
-	char *buf;
+    MsnSession *session;
+    PurpleConnection *connection;
+    PurpleAccount *account;
+    const gchar *rru;
+    const gchar *url;
+    gchar creds[64];
+    glong tmp_timestamp;
 
-	gulong tmp_timestamp;
+    session = cmdproc->session;
+    account = msn_session_get_user_data (session);
+    connection = purple_account_get_connection (account);
 
-	session = cmdproc->session;
-	account = session->account;
-	gc = account->gc;
+    rru = cmd->params[1];
+    url = cmd->params[2];
 
-	rru = cmd->params[1];
-	url = cmd->params[2];
+    session->passport_info.mail_url_timestamp = time (NULL);
+    tmp_timestamp = session->passport_info.mail_url_timestamp - session->passport_info.sl;
 
-	session->passport_info.mail_timestamp = time(NULL);
-	tmp_timestamp = session->passport_info.mail_timestamp - session->passport_info.sl;
+    {
+        PurpleCipher *cipher;
+        PurpleCipherContext *context;
+        guchar digest[16];
+        gchar *buf;
 
-	buf = g_strdup_printf("%s%lu%s",
-	                      session->passport_info.mspauth ? session->passport_info.mspauth : "BOGUS",
-	                      tmp_timestamp,
-	                      purple_connection_get_password(gc));
+        buf = g_strdup_printf ("%s%ld%s",
+                               session->passport_info.mspauth ? session->passport_info.mspauth : "BOGUS",
+                               tmp_timestamp,
+                               purple_connection_get_password (connection));
 
-	cipher = purple_cipher_context_new_by_name("md5", NULL);
-	purple_cipher_context_append(cipher, (const guchar *)buf, strlen(buf));
-	purple_cipher_context_digest_to_str(cipher, sizeof(creds), creds, NULL);
-	purple_cipher_context_destroy(cipher);
-	g_free(buf);
+        cipher = purple_ciphers_find_cipher ("md5");
+        context = purple_cipher_context_new (cipher, NULL);
 
-	g_free(session->passport_info.mail_url);
-	session->passport_info.mail_url =
-		g_strdup_printf("%s&auth=%s&creds=%s&sl=%ld&username=%s&mode=ttl&sid=%s&id=2&rru=%s&svc=mail&js=yes",
-		                url,
-		                session->passport_info.mspauth ? purple_url_encode(session->passport_info.mspauth) : "BOGUS",
-		                creds,
-		                tmp_timestamp,
-		                msn_user_get_passport(session->user),
-		                session->passport_info.sid,
-		                rru);
+        purple_cipher_context_append (context, (const guchar *) buf, strlen (buf));
+        purple_cipher_context_digest (context, sizeof (digest), digest, NULL);
+        purple_cipher_context_destroy (context);
 
-	/* The user wants to check his or her email */
-	if (cmd->trans && cmd->trans->data)
-		purple_notify_uri(purple_account_get_connection(account), session->passport_info.mail_url);
+        g_free (buf);
+
+        memset (creds, 0, sizeof (creds));
+
+        {
+            gchar buf2[3];
+            gint i;
+
+            for (i = 0; i < 16; i++)
+            {
+                g_snprintf (buf2, sizeof (buf2), "%02x", digest[i]);
+                strcat (creds, buf2);
+            }
+        }
+    }
+
+    g_free (session->passport_info.mail_url);
+
+    session->passport_info.mail_url = g_strdup_printf ("%s&auth=%s&creds=%s&sl=%ld&username=%s&mode=ttl&sid=%s&id=2&rru=%ssvc_mail&js=yes",
+                                                       url,
+                                                       session->passport_info.mspauth,
+                                                       creds,
+                                                       tmp_timestamp,
+                                                       msn_session_get_username (session),
+                                                       session->passport_info.sid,
+                                                       rru);
+
+    /* The user wants to check his email */
+    if (cmd->trans && cmd->trans->data)
+    {
+        purple_notify_uri (connection, session->passport_info.mail_url);
+        return;
+    }
+
+    if (purple_account_get_check_mail (account))
+    {
+        static gboolean is_initial = TRUE;
+
+        if (!is_initial)
+            return;
+
+        if (session->inbox_unread_count > 0)
+        {
+            const gchar *passport;
+            const gchar *main_url;
+
+            passport = msn_session_get_username (session);
+            main_url = session->passport_info.mail_url;
+
+            purple_notify_emails (connection, session->inbox_unread_count, FALSE, NULL, NULL,
+                                  &passport, &main_url, NULL, NULL);
+        }
+
+        is_initial = FALSE;
+    }
 }
+
 /**************************************************************************
  * Switchboards
  **************************************************************************/
@@ -1452,533 +1258,75 @@ url_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 static void
 rng_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	MsnSession *session;
-	MsnSwitchBoard *swboard;
-	const char *session_id;
-	char *host;
-	int port;
+    MsnSession *session;
+    MsnSwitchBoard *swboard;
+    char *host;
+    int port;
+    const char *id;
 
-	session = cmdproc->session;
-	session_id = cmd->params[0];
+    session = cmdproc->session;
 
-	msn_parse_socket(cmd->params[1], &host, &port);
+    msn_parse_socket(cmd->params[1], &host, &port);
 
-	if (session->http_method)
-		port = 80;
+    swboard = msn_switchboard_new(session);
+    msn_switchboard_set_invited(swboard, TRUE);
+    msn_switchboard_set_session_id(swboard, cmd->params[0]);
+    msn_switchboard_set_auth_key(swboard, cmd->params[3]);
 
-	swboard = msn_switchboard_new(session);
+    if (g_hash_table_lookup (session->conversations, cmd->params[4])) {
+        swboard->chat_id = session->conv_seq++;
 
-	msn_switchboard_set_invited(swboard, TRUE);
-	msn_switchboard_set_session_id(swboard, session_id);
-	msn_switchboard_set_auth_key(swboard, cmd->params[3]);
-	swboard->im_user = g_strdup(cmd->params[4]);
-	/* msn_switchboard_add_user(swboard, cmd->params[4]); */
+        g_hash_table_insert (session->chats, GINT_TO_POINTER (swboard->chat_id), swboard);
 
-	if (!msn_switchboard_connect(swboard, host, port))
-		msn_switchboard_destroy(swboard);
+        /* we should not leave chats on timeouts */
+        pn_timer_free(swboard->timer);
+        swboard->timer = NULL;
 
-	g_free(host);
+        id = "chat";
+    }
+    else {
+        id = swboard->im_user = g_strdup(cmd->params[4]);
+
+        g_hash_table_insert (session->conversations, g_strdup (id), swboard);
+    }
+
+    pn_node_set_id(swboard->cmdproc->conn, session->conn_count++, id);
+
+    if (!msn_switchboard_connect(swboard, host, port))
+        msn_switchboard_close(swboard);
+
+    g_free(host);
 }
 
 static void
 xfr_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
 {
-	char *host;
-	int port;
-
-	if (strcmp(cmd->params[1], "SB") && strcmp(cmd->params[1], "NS"))
-	{
-		/* Maybe we can have a generic bad command error. */
-		purple_debug_error("msn", "Bad XFR command (%s)\n", cmd->params[1]);
-		return;
-	}
-
-	msn_parse_socket(cmd->params[2], &host, &port);
-
-	if (!strcmp(cmd->params[1], "SB"))
-	{
-		purple_debug_error("msn", "This shouldn't be handled here.\n");
-	}
-	else if (!strcmp(cmd->params[1], "NS"))
-	{
-		MsnSession *session;
-
-		session = cmdproc->session;
-
-		msn_session_set_login_step(session, MSN_LOGIN_STEP_TRANSFER);
-
-		msn_notification_connect(session->notification, host, port);
-	}
-
-	g_free(host);
-}
-
-static void
-gcf_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-/* QuLogic: Disabled until confirmed correct. */
-#if 0
-	xmlnode *root;
-	xmlnode *policy;
-
-	g_return_if_fail(cmd->payload != NULL);
-
-	if ( (root = xmlnode_from_str(cmd->payload, cmd->payload_len)) == NULL)
-	{
-		purple_debug_error("msn", "Unable to parse GCF payload into a XML tree\n");
-		return;
-	}
-
-
-	g_free(cmdproc->session->blocked_text);
-	cmdproc->session->blocked_text = NULL;
-
-	/* We need a get_child with attrib... */
-	policy = xmlnode_get_child(root, "Policy");
-	while (policy) {
-		if (g_str_equal(xmlnode_get_attrib(policy, "type"), "SHIELDS"))
-			break;
-		policy = xmlnode_get_next_twin(policy);
-	}
-
-	if (policy) {
-		GString *blocked = g_string_new(NULL);
-		xmlnode *imtext = xmlnode_get_child(policy,
-		                                    "config/block/regexp/imtext");
-		while (imtext) {
-			const char *value = xmlnode_get_attrib(imtext, "value");
-			g_string_append_printf(blocked, "%s<br/>\n",
-			                       purple_base64_decode(value, NULL));
-			imtext = xmlnode_get_next_twin(imtext);
-		}
-
-		cmdproc->session->blocked_text = g_string_free(blocked, FALSE);
-	}
-
-	xmlnode_free(root);
-#endif
-}
-
-static void
-gcf_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_info("msn", "Processing GCF command\n");
-
-	cmdproc->last_cmd->payload_cb  = gcf_cmd_post;
-	cmd->payload_len = atoi(cmd->params[1]);
-}
-
-static void
-sbs_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_info("msn", "Processing SBS... \n");
-	/*get the payload content*/
-}
-
-static void
-parse_user_endpoints(MsnUser *user, xmlnode *payloadNode)
-{
-	MsnSession *session;
-	xmlnode *epNode, *capsNode;
-	MsnUserEndpoint data;
-	const char *id;
-	char *caps, *tmp;
-	gboolean is_me;
-
-	purple_debug_info("msn", "Get EndpointData\n");
-
-	session = user->userlist->session;
-	is_me = (user == session->user);
-
-	msn_user_clear_endpoints(user);
-	for (epNode = xmlnode_get_child(payloadNode, "EndpointData");
-	     epNode;
-	     epNode = xmlnode_get_next_twin(epNode)) {
-		id = xmlnode_get_attrib(epNode, "id");
-		capsNode = xmlnode_get_child(epNode, "Capabilities");
-
-		/* Disconnect others, if MPOP is disabled */
-		if (is_me
-		 && !session->enable_mpop
-		 && strncasecmp(id + 1, session->guid, 36) != 0) {
-			purple_debug_info("msn", "Disconnecting Endpoint %s\n", id);
-
-			tmp = g_strdup_printf("%s;%s", user->passport, id);
-			msn_notification_send_uun(session, tmp, MSN_UNIFIED_NOTIFICATION_MPOP, "goawyplzthxbye");
-			g_free(tmp);
-		} else {
-			if (capsNode != NULL) {
-				caps = xmlnode_get_data(capsNode);
-
-				data.clientid = strtoul(caps, &tmp, 10);
-				if (tmp && *tmp)
-					data.extcaps = strtoul(tmp + 1, NULL, 10);
-				else
-					data.extcaps = 0;
-
-				g_free(caps);
-			} else {
-				data.clientid = 0;
-				data.extcaps = 0;
-			}
-
-			msn_user_set_endpoint_data(user, id, &data);
-		}
-	}
-
-	if (is_me && session->enable_mpop) {
-		for (epNode = xmlnode_get_child(payloadNode, "PrivateEndpointData");
-		     epNode;
-		     epNode = xmlnode_get_next_twin(epNode)) {
-			MsnUserEndpoint *ep;
-			xmlnode *nameNode, *clientNode;
-
-			/*	<PrivateEndpointData id='{GUID}'>
-					<EpName>Endpoint Name</EpName>
-					<Idle>true/false</Idle>
-					<ClientType>1</ClientType>
-					<State>NLN</State>
-				</PrivateEndpointData>
-			*/
-			id = xmlnode_get_attrib(epNode, "id");
-			ep = msn_user_get_endpoint_data(user, id);
-
-			if (ep != NULL) {
-				nameNode = xmlnode_get_child(epNode, "EpName");
-				if (nameNode != NULL) {
-					g_free(ep->name);
-					ep->name = xmlnode_get_data(nameNode);
-				}
-
-				clientNode = xmlnode_get_child(epNode, "ClientType");
-				if (clientNode != NULL) {
-					tmp = xmlnode_get_data(clientNode);
-					ep->type = strtoul(tmp, NULL, 10);
-					g_free(tmp);
-				}
-			}
-		}
-	}
-}
-
-static void parse_currentmedia(MsnUser *user, const char *cmedia)
-{
-	char **cmedia_array;
-	int strings = 0;
-
-	if (!cmedia || cmedia[0] == '\0') {
-		purple_debug_info("msn", "No currentmedia string\n");
-		return;
-	}
-
-	purple_debug_info("msn", "Parsing currentmedia string: \"%s\"\n", cmedia);
-
-	cmedia_array = g_strsplit(cmedia, "\\0", 0);
-
-	/*
-	 * 0: Application
-	 * 1: 'Music'/'Games'/'Office'
-	 * 2: '1' if enabled, '0' if not
-	 * 3: Format (eg. {0} by {1})
-	 * 4: Title
-	 * If 'Music':
-	 *  5: Artist
-	 *  6: Album
-	 *  7: ?
-	 */
-	strings  = g_strv_length(cmedia_array);
-
-	if (strings >= 4 && !strcmp(cmedia_array[2], "1")) {
-		if (user->extinfo == NULL)
-			user->extinfo = g_new0(MsnUserExtendedInfo, 1);
-		else {
-			g_free(user->extinfo->media_album);
-			g_free(user->extinfo->media_artist);
-			g_free(user->extinfo->media_title);
-		}
-
-		if (!strcmp(cmedia_array[1], "Music"))
-			user->extinfo->media_type = CURRENT_MEDIA_MUSIC;
-		else if (!strcmp(cmedia_array[1], "Games"))
-			user->extinfo->media_type = CURRENT_MEDIA_GAMES;
-		else if (!strcmp(cmedia_array[1], "Office"))
-			user->extinfo->media_type = CURRENT_MEDIA_OFFICE;
-		else
-			user->extinfo->media_type = CURRENT_MEDIA_UNKNOWN;
-
-		user->extinfo->media_title = g_strdup(cmedia_array[strings == 4 ? 3 : 4]);
-		user->extinfo->media_artist = strings > 5 ? g_strdup(cmedia_array[5]) : NULL;
-		user->extinfo->media_album = strings > 6 ? g_strdup(cmedia_array[6]) : NULL;
-	}
-
-	g_strfreev(cmedia_array);
-}
-
-/*
- * Get the UBX's PSM info
- * Post it to the User status
- * Thanks for Chris <ukdrizzle@yahoo.co.uk>'s code
- */
-static void
-ubx_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	MsnSession *session;
-	MsnUser *user;
-	char *passport;
-	int network;
-	xmlnode *payloadNode;
-	char *psm_str, *str;
-
-	session = cmdproc->session;
-
-	msn_parse_user(cmd->params[0], &passport, &network);
-	user = msn_userlist_find_user(session->userlist, passport);
-
-	if (user == NULL) {
-		str = g_strndup(payload, len);
-		purple_debug_info("msn", "unknown user %s, payload is %s\n",
-			passport, str);
-		g_free(passport);
-		g_free(str);
-		return;
-	}
-
-	g_free(passport);
-
-	/* Free any existing media info for this user */
-	if (user->extinfo) {
-		g_free(user->extinfo->media_album);
-		g_free(user->extinfo->media_artist);
-		g_free(user->extinfo->media_title);
-		user->extinfo->media_album = NULL;
-		user->extinfo->media_artist = NULL;
-		user->extinfo->media_title = NULL;
-		user->extinfo->media_type = CURRENT_MEDIA_UNKNOWN;
-	}
-
-	if (len != 0) {
-		payloadNode = xmlnode_from_str(payload, len);
-		if (!payloadNode) {
-			purple_debug_error("msn", "UBX XML parse Error!\n");
-
-			msn_user_set_statusline(user, NULL);
-
-			msn_user_update(user);
-			return;
-		}
-
-		psm_str = msn_get_psm(payloadNode);
-		msn_user_set_statusline(user, psm_str);
-		g_free(psm_str);
-
-		str = msn_get_currentmedia(payloadNode);
-		parse_currentmedia(user, str);
-		g_free(str);
-
-		parse_user_endpoints(user, payloadNode);
-
-		xmlnode_free(payloadNode);
-
-	} else {
-		msn_user_set_statusline(user, NULL);
-	}
-
-	msn_user_update(user);
-}
-
-static void
-ubx_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_misc("msn", "UBX received.\n");
-	cmdproc->last_cmd->payload_cb  = ubx_cmd_post;
-	cmd->payload_len = atoi(cmd->params[1]);
-}
-
-static void
-uux_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	/* Do Nothing, right now. */
-	if (payload != NULL)
-		purple_debug_info("msn", "UUX payload:\n%s\n", payload);
-}
-
-static void
-uux_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_misc("msn", "UUX received.\n");
-	cmdproc->last_cmd->payload_cb = uux_cmd_post;
-	cmd->payload_len = atoi(cmd->params[1]);
-}
-
-void
-msn_notification_send_uux(MsnSession *session, const char *payload)
-{
-	MsnTransaction *trans;
-	MsnCmdProc *cmdproc;
-	size_t len = strlen(payload);
-
-	cmdproc = session->notification->cmdproc;
-	purple_debug_misc("msn", "Sending UUX command with payload: %s\n", payload);
-	trans = msn_transaction_new(cmdproc, "UUX", "%" G_GSIZE_FORMAT, len);
-	msn_transaction_set_payload(trans, payload, len);
-	msn_cmdproc_send_trans(cmdproc, trans);
-}
-
-void msn_notification_send_uux_endpointdata(MsnSession *session)
-{
-	xmlnode *epDataNode;
-	xmlnode *capNode;
-	char *caps;
-	char *payload;
-	int length;
-
-	epDataNode = xmlnode_new("EndpointData");
-
-	capNode = xmlnode_new_child(epDataNode, "Capabilities");
-	caps = g_strdup_printf("%d:%02d", MSN_CLIENT_ID_CAPABILITIES, MSN_CLIENT_ID_EXT_CAPS);
-	xmlnode_insert_data(capNode, caps, -1);
-	g_free(caps);
-
-	payload = xmlnode_to_str(epDataNode, &length);
-
-	msn_notification_send_uux(session, payload);
-
-	xmlnode_free(epDataNode);
-	g_free(payload);
-}
-
-void msn_notification_send_uux_private_endpointdata(MsnSession *session)
-{
-	xmlnode *private;
-	const char *name;
-	xmlnode *epname;
-	xmlnode *idle;
-	GHashTable *ui_info;
-	const gchar *ui_type;
-	xmlnode *client_type;
-	xmlnode *state;
-	char *payload;
-	int length;
-
-	private = xmlnode_new("PrivateEndpointData");
-
-	name = purple_account_get_string(session->account, "endpoint-name", NULL);
-	epname = xmlnode_new_child(private, "EpName");
-	xmlnode_insert_data(epname, name, -1);
-
-	idle = xmlnode_new_child(private, "Idle");
-	xmlnode_insert_data(idle, "false", -1);
-
-	/* ClientType info (from amsn guys):
-		0: None
-		1: Computer
-		2: Website
-		3: Mobile / none
-		4: Xbox / phone /mobile
-		9: MsnGroup
-		32: Email member, currently Yahoo!
-	*/
-	client_type = xmlnode_new_child(private, "ClientType");
-	ui_info = purple_core_get_ui_info();
-	ui_type = ui_info ? g_hash_table_lookup(ui_info, "client_type") : NULL;
-	if (ui_type) {
-		if (strcmp(ui_type, "pc") == 0)
-			xmlnode_insert_data(client_type, "1", -1);
-		else if (strcmp(ui_type, "web") == 0)
-			xmlnode_insert_data(client_type, "2", -1);
-		else if (strcmp(ui_type, "phone") == 0)
-			xmlnode_insert_data(client_type, "3", -1);
-		else if (strcmp(ui_type, "handheld") == 0)
-			xmlnode_insert_data(client_type, "3", -1);
-		else
-			xmlnode_insert_data(client_type, "1", -1);
-	}
-	else
-		xmlnode_insert_data(client_type, "1", -1);
-
-	state = xmlnode_new_child(private, "State");
-	xmlnode_insert_data(state, msn_state_get_text(msn_state_from_account(session->account)), -1);
-
-	payload = xmlnode_to_str(private, &length);
-
-	msn_notification_send_uux(session, payload);
-
-	xmlnode_free(private);
-	g_free(payload);
-}
-
-static void
-ubn_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	/* Do Nothing, right now. */
-	if (payload != NULL)
-		purple_debug_info("msn", "UBN payload:\n%s\n", payload);
-}
-
-static void
-ubn_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	purple_debug_misc("msn", "UBN received from %s.\n", cmd->params[0]);
-	cmdproc->last_cmd->payload_cb  = ubn_cmd_post;
-	cmd->payload_len = atoi(cmd->params[2]);
-}
-
-static void
-uun_cmd_post(MsnCmdProc *cmdproc, MsnCommand *cmd, char *payload,
-			 size_t len)
-{
-	/* Do Nothing, right now. */
-	if (payload != NULL)
-		purple_debug_info("msn", "UUN payload:\n%s\n", payload);
-}
-
-static void
-uun_cmd(MsnCmdProc *cmdproc, MsnCommand *cmd)
-{
-	if (strcmp(cmd->params[1], "OK") != 0) {
-		purple_debug_misc("msn", "UUN received.\n");
-		cmdproc->last_cmd->payload_cb = uun_cmd_post;
-		cmd->payload_len = atoi(cmd->params[1]);
-	}
-	else
-		purple_debug_misc("msn", "UUN OK received.\n");
-}
-
-void
-msn_notification_send_uun(MsnSession *session, const char *user,
-                          MsnUnifiedNotificationType type, const char *payload)
-{
-	MsnTransaction *trans;
-	MsnCmdProc *cmdproc;
-	size_t len = strlen(payload);
-
-	cmdproc = session->notification->cmdproc;
-	purple_debug_misc("msn", "Sending UUN command %d to %s with payload: %s\n",
-	                  type, user, payload);
-	trans = msn_transaction_new(cmdproc, "UUN", "%s %d %" G_GSIZE_FORMAT,
-	                            user, type, len);
-	msn_transaction_set_payload(trans, payload, len);
-	msn_cmdproc_send_trans(cmdproc, trans);
-}
-
-void
-msn_notification_send_circle_auth(MsnSession *session, const char *ticket)
-{
-	MsnTransaction *trans;
-	MsnCmdProc *cmdproc;
-	char *encoded;
-
-	cmdproc = session->notification->cmdproc;
-
-	encoded = purple_base64_encode((guchar *)ticket, strlen(ticket));
-	trans = msn_transaction_new(cmdproc, "USR", "SHA A %s", encoded);
-	msn_cmdproc_send_trans(cmdproc, trans);
-
-	g_free(encoded);
+    char *host;
+    int port;
+
+    if (strcmp(cmd->params[1], "SB") && strcmp(cmd->params[1], "NS"))
+    {
+        /* Maybe we can have a generic bad command error. */
+        pn_error ("bad XFR command: params=[%s]", cmd->params[1]);
+        return;
+    }
+
+    msn_parse_socket(cmd->params[2], &host, &port);
+
+    if (!strcmp(cmd->params[1], "SB"))
+    {
+        pn_error ("this shouldn't be handled here");
+    }
+    else if (!strcmp(cmd->params[1], "NS"))
+    {
+        MsnSession *session;
+
+        session = cmdproc->session;
+
+        msn_notification_connect(session->notification, host, port);
+    }
+
+    g_free(host);
 }
 
 /**************************************************************************
@@ -1988,493 +1336,487 @@ msn_notification_send_circle_auth(MsnSession *session, const char *ticket)
 static void
 profile_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
 {
-	MsnSession *session;
-	const char *value;
-#ifdef MSN_PARTIAL_LISTS
-	const char *clLastChange;
+    MsnSession *session;
+    const char *value;
+
+    session = cmdproc->session;
+
+    if (strcmp(msg->remote_user, "Hotmail"))
+    {
+        pn_warning ("unofficial message");
+        return;
+    }
+
+    if ((value = msn_message_get_attr(msg, "kv")) != NULL)
+    {
+        g_free(session->passport_info.kv);
+        session->passport_info.kv = g_strdup(value);
+    }
+
+    if ((value = msn_message_get_attr(msg, "sid")) != NULL)
+    {
+        g_free(session->passport_info.sid);
+        session->passport_info.sid = g_strdup(value);
+    }
+
+    if ((value = msn_message_get_attr(msg, "MSPAuth")) != NULL)
+    {
+        g_free(session->passport_info.mspauth);
+        session->passport_info.mspauth = g_strdup(value);
+    }
+
+    if ((value = msn_message_get_attr(msg, "ClientIP")) != NULL)
+    {
+        g_free(session->passport_info.client_ip);
+        session->passport_info.client_ip = g_strdup(value);
+    }
+
+    if ((value = msn_message_get_attr(msg, "ClientPort")) != NULL)
+        session->passport_info.client_port = g_ntohs(atoi(value));
+
+    if ((value = msn_message_get_attr(msg, "LoginTime")) != NULL)
+        session->passport_info.sl = atol(value);
+
+    if ((value = msn_message_get_attr(msg, "EmailEnabled")) != NULL)
+        session->passport_info.email_enabled = atol(value);
+}
+
+static void
+initial_mdata_msg (MsnCmdProc *cmdproc,
+                   MsnMessage *msg)
+{
+    MsnSession *session;
+    GHashTable *table;
+
+    session = cmdproc->session;
+
+    if (strcmp (msg->remote_user, "Hotmail"))
+    {
+        pn_warning ("unofficial message");
+        return;
+    }
+
+    table = msn_message_get_hashtable_from_body (msg);
+
+    {
+        gchar *mdata;
+        mdata = g_hash_table_lookup (table, "Mail-Data");
+
+        if (mdata)
+        {
+            gchar *iu = NULL;
+            const gchar *start;
+            const gchar *end;
+            guint len;
+
+            len = strlen (mdata);
+            start = g_strstr_len (mdata, len, "<IU>");
+
+            if (start)
+            {
+                start += strlen ("<IU>");
+                end = g_strstr_len (start, len - (start - mdata), "</IU>");
+
+                if (end > start)
+                    iu = g_strndup (start, end - start);
+            }
+
+            if (iu)
+            {
+                session->inbox_unread_count = atoi (iu);
+
+                g_free (iu);
+            }
+
+            do
+            {
+                start = g_strstr_len (start, len - (start - mdata), "<M>");
+
+                if (start)
+                {
+                    start += strlen ("<M>");
+                    end = g_strstr_len (start, len - (start - mdata), "</M>");
+
+                    if (end > start)
+                    {
+                        gchar *read_set;
+
+#if 0
+                        {
+                            gchar *field;
+                            gchar *tmp;
+                            tmp = pn_get_xml_field ("N", start, end);
+                            field = purple_mime_decode_field (tmp);
+                            g_print ("field={%s}\n", field);
+                            g_free (field);
+                            g_free (tmp);
+                        }
 #endif
 
-	session = cmdproc->session;
+                        read_set = pn_get_xml_field ("RS", start, end);
 
-	if (strcmp(msg->remote_user, "Hotmail"))
-		/* This isn't an official message. */
-		return;
+                        if (strcmp (read_set, "0") == 0)
+                        {
+                            gchar *passport;
+                            gchar *message_id;
+                            struct pn_contact *contact;
 
-	if ((value = msn_message_get_header_value(msg, "sid")) != NULL)
-	{
-		g_free(session->passport_info.sid);
-		session->passport_info.sid = g_strdup(value);
-	}
+                            passport = pn_get_xml_field ("E", start, end);
+                            contact = pn_contactlist_find_contact (session->contactlist, passport);
 
-	if ((value = msn_message_get_header_value(msg, "MSPAuth")) != NULL)
-	{
-		g_free(session->passport_info.mspauth);
-		session->passport_info.mspauth = g_strdup(value);
-	}
+                            message_id = pn_get_xml_field ("I", start, end);
 
-	if ((value = msn_message_get_header_value(msg, "ClientIP")) != NULL)
-	{
-		g_free(session->passport_info.client_ip);
-		session->passport_info.client_ip = g_strdup(value);
-	}
+                            if (contact && !(pn_contact_is_blocked (contact)))
+                                pn_oim_session_request (session->oim_session,
+                                                        passport,
+                                                        message_id,
+                                                        NULL,
+                                                        PN_RECEIVE_OIM);
 
-	if ((value = msn_message_get_header_value(msg, "ClientPort")) != NULL)
-	{
-		session->passport_info.client_port = ntohs(atoi(value));
-	}
+                            g_free (passport);
+                            g_free (message_id);
+                        }
 
-	if ((value = msn_message_get_header_value(msg, "LoginTime")) != NULL)
-		session->passport_info.sl = atol(value);
+                        g_free (read_set);
+                        start = end + strlen ("</M>");
+                    }
+                }
+            } while (start);
+        }
 
-	if ((value = msn_message_get_header_value(msg, "EmailEnabled")) != NULL)
-		session->passport_info.email_enabled = (gboolean)atol(value);
+        {
+            PurpleAccount *account;
 
-#ifdef MSN_PARTIAL_LISTS
-	/*starting retrieve the contact list*/
-	clLastChange = purple_account_get_string(session->account, "CLLastChange", NULL);
-	/* msn_userlist_load defeats all attempts at trying to detect blist sync issues */
-	msn_userlist_load(session);
-	msn_get_contact_list(session, MSN_PS_INITIAL, clLastChange);
-#else
-	/* always get the full list? */
-	msn_get_contact_list(session, MSN_PS_INITIAL, NULL);
-#endif
+            account = msn_session_get_user_data (session);
+
+            if (purple_account_get_check_mail (account) &&
+                session->passport_info.email_enabled == 1)
+            {
+                msn_cmdproc_send (cmdproc, "URL", "%s", "INBOX");
+            }
+        }
+    }
+
+    g_hash_table_destroy(table);
 }
 
 static void
-initial_email_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
+oim_msg (MsnCmdProc *cmdproc,
+         MsnMessage *msg)
 {
-	MsnSession *session;
-	PurpleConnection *gc;
-	GHashTable *table;
-	const char *unread;
+    GHashTable *table;
+    gchar *mdata;
 
-	session = cmdproc->session;
-	gc = session->account->gc;
+    table = msn_message_get_hashtable_from_body (msg);
 
-	if (strcmp(msg->remote_user, "Hotmail"))
-		/* This isn't an official message. */
-		return;
+    mdata = g_hash_table_lookup (table, "Mail-Data");
 
-	if (session->passport_info.mail_url == NULL)
-	{
-		MsnTransaction *trans;
-		trans = msn_transaction_new(cmdproc, "URL", "%s", "INBOX");
-		msn_transaction_queue_cmd(trans, msg->cmd);
+    if (mdata)
+    {
+        MsnSession *session;
+        const gchar *start;
+        const gchar *end;
+        guint len;
 
-		msn_cmdproc_send_trans(cmdproc, trans);
+        session = cmdproc->session;
 
-		return;
-	}
+        len = strlen (mdata);
+        start = g_strstr_len (mdata, len, "<M>");
 
-	if (!purple_account_get_check_mail(session->account))
-		return;
+        while (start)
+        {
+            start += strlen ("<M>");
+            end = g_strstr_len (start, len - (start - mdata), "</M>");
 
-	table = msn_message_get_hashtable_from_body(msg);
+            if (end > start)
+            {
+                gchar *read_set;
 
-	unread = g_hash_table_lookup(table, "Inbox-Unread");
+                read_set = pn_get_xml_field ("RS", start, end);
 
-	if (unread != NULL)
-	{
-		int count = atoi(unread);
+                if (strcmp (read_set, "0") == 0)
+                {
+                    gchar *passport;
+                    gchar *message_id;
+                    struct pn_contact *contact;
 
-		if (count > 0)
-		{
-			const char *passports[2] = { msn_user_get_passport(session->user) };
-			const char *urls[2] = { session->passport_info.mail_url };
+                    passport = pn_get_xml_field ("E", start, end);
+                    contact = pn_contactlist_find_contact (session->contactlist, passport);
 
-			purple_notify_emails(gc, count, FALSE, NULL, NULL,
-							   passports, urls, NULL, NULL);
-		}
-	}
+                    message_id = pn_get_xml_field ("I", start, end);
 
-	g_hash_table_destroy(table);
-}
+                    if (contact && !(pn_contact_is_blocked (contact)))
+                        pn_oim_session_request (session->oim_session, passport, message_id,
+                                                NULL, PN_RECEIVE_OIM);
 
-/*offline Message notification process*/
-static void
-initial_mdata_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
-{
-	MsnSession *session;
-	PurpleConnection *gc;
-	GHashTable *table;
-	const char *mdata, *unread;
+                    g_free (passport);
+                    g_free (message_id);
+                }
 
-	session = cmdproc->session;
-	gc = session->account->gc;
+                g_free (read_set);
+                start = end + strlen ("</M>");
+            }
 
-	if (strcmp(msg->remote_user, "Hotmail"))
-		/* This isn't an official message. */
-		return;
-
-	table = msn_message_get_hashtable_from_body(msg);
-
-	mdata = g_hash_table_lookup(table, "Mail-Data");
-
-	if (mdata != NULL)
-		msn_parse_oim_msg(session->oim, mdata);
-
-	if (g_hash_table_lookup(table, "Inbox-URL") == NULL)
-	{
-		g_hash_table_destroy(table);
-		return;
-	}
-
-	if (session->passport_info.mail_url == NULL)
-	{
-		MsnTransaction *trans;
-		trans = msn_transaction_new(cmdproc, "URL", "%s", "INBOX");
-		msn_transaction_queue_cmd(trans, msg->cmd);
-
-		msn_cmdproc_send_trans(cmdproc, trans);
-
-		g_hash_table_destroy(table);
-		return;
-	}
-
-	if (!purple_account_get_check_mail(session->account))
-	{
-		g_hash_table_destroy(table);
-		return;
-	}
-
-	unread = g_hash_table_lookup(table, "Inbox-Unread");
-
-	if (unread != NULL)
-	{
-		int count = atoi(unread);
-
-		if (count > 0)
-		{
-			const char *passports[2] = { msn_user_get_passport(session->user) };
-			const char *urls[2] = { session->passport_info.mail_url };
-
-			purple_notify_emails(gc, count, FALSE, NULL, NULL,
-							   passports, urls, NULL, NULL);
-		}
-	}
-
-	g_hash_table_destroy(table);
-}
-
-/*offline Message Notification*/
-static void
-delete_oim_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
-{
-	purple_debug_misc("msn", "Delete OIM message.\n");
+            start = g_strstr_len (start, len - (start - mdata), "<M>");
+        }
+    }
 }
 
 static void
 email_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
 {
-	MsnSession *session;
-	PurpleConnection *gc;
-	GHashTable *table;
-	char *from, *subject, *tmp;
+    MsnSession *session;
+    PurpleAccount *account;
+    GHashTable *table;
+    char *from, *subject, *tmp;
 
-	session = cmdproc->session;
-	gc = session->account->gc;
+    session = cmdproc->session;
+    account = msn_session_get_user_data (session);
 
-	if (strcmp(msg->remote_user, "Hotmail"))
-		/* This isn't an official message. */
-		return;
+    if (!purple_account_get_check_mail (account))
+        return;
 
-	if (session->passport_info.mail_url == NULL)
-	{
-		MsnTransaction *trans;
-		trans = msn_transaction_new(cmdproc, "URL", "%s", "INBOX");
-		msn_transaction_queue_cmd(trans, msg->cmd);
+    if (strcmp(msg->remote_user, "Hotmail"))
+    {
+        pn_warning ("unofficial message");
+        return;
+    }
 
-		msn_cmdproc_send_trans(cmdproc, trans);
+    if (!session->passport_info.mail_url)
+    {
+        pn_error ("no url");
+        return;
+    }
 
-		return;
-	}
+    table = msn_message_get_hashtable_from_body(msg);
 
-	if (!purple_account_get_check_mail(session->account))
-		return;
+    from = subject = NULL;
 
-	table = msn_message_get_hashtable_from_body(msg);
+    tmp = g_hash_table_lookup(table, "From");
+    if (tmp != NULL)
+        from = purple_mime_decode_field(tmp);
 
-	from = subject = NULL;
+    tmp = g_hash_table_lookup(table, "Subject");
+    if (tmp != NULL)
+        subject = purple_mime_decode_field(tmp);
 
-	tmp = g_hash_table_lookup(table, "From");
-	if (tmp != NULL)
-		from = purple_mime_decode_field(tmp);
+    {
+        PurpleConnection *connection;
+        connection = purple_account_get_connection (account);
+        /** @todo go to the extact email */
+        purple_notify_email (connection,
+                             (subject ? subject : ""),
+                             (from ?  from : ""),
+                             msn_session_get_username (session),
+                             session->passport_info.mail_url, NULL, NULL);
+    }
 
-	tmp = g_hash_table_lookup(table, "Subject");
-	if (tmp != NULL)
-		subject = purple_mime_decode_field(tmp);
+    g_free(from);
+    g_free(subject);
 
-	purple_notify_email(gc,
-					  (subject != NULL ? subject : ""),
-					  (from != NULL ?  from : ""),
-					  msn_user_get_passport(session->user),
-					  session->passport_info.mail_url, NULL, NULL);
-
-	g_free(from);
-	g_free(subject);
-
-	g_hash_table_destroy(table);
+    g_hash_table_destroy(table);
 }
 
 static void
 system_msg(MsnCmdProc *cmdproc, MsnMessage *msg)
 {
-	GHashTable *table;
-	const char *type_s;
+    GHashTable *table;
+    const char *type_s;
 
-	if (strcmp(msg->remote_user, "Hotmail"))
-		/* This isn't an official message. */
-		return;
+    if (strcmp(msg->remote_user, "Hotmail"))
+    {
+        pn_warning ("unofficial message");
+        return;
+    }
 
-	table = msn_message_get_hashtable_from_body(msg);
+    table = msn_message_get_hashtable_from_body(msg);
 
-	if ((type_s = g_hash_table_lookup(table, "Type")) != NULL)
-	{
-		int type = atoi(type_s);
-		char buf[MSN_BUF_LEN] = "";
-		int minutes;
+    if ((type_s = g_hash_table_lookup(table, "Type")) != NULL)
+    {
+        int type = atoi(type_s);
+        gchar *msg;
+        int minutes;
 
-		switch (type)
-		{
-			case 1:
-				minutes = atoi(g_hash_table_lookup(table, "Arg1"));
-				g_snprintf(buf, sizeof(buf), dngettext(PACKAGE,
-							"The MSN server will shut down for maintenance "
-							"in %d minute. You will automatically be "
-							"signed out at that time.  Please finish any "
-							"conversations in progress.\n\nAfter the "
-							"maintenance has been completed, you will be "
-							"able to successfully sign in.",
-							"The MSN server will shut down for maintenance "
-							"in %d minutes. You will automatically be "
-							"signed out at that time.  Please finish any "
-							"conversations in progress.\n\nAfter the "
-							"maintenance has been completed, you will be "
-							"able to successfully sign in.", minutes),
-						minutes);
-			default:
-				break;
-		}
+        switch (type)
+        {
+            case 1:
+                minutes = atoi(g_hash_table_lookup(table, "Arg1"));
+                msg = g_strdup_printf(_("The MSN server will shut down for maintenance "
+                                        "in %d minutes. You will automatically be "
+                                        "signed out at that time.  Please finish any "
+                                        "conversations in progress.\n\nAfter the "
+                                        "maintenance has been completed, you will be "
+                                        "able to successfully sign in."), minutes);
+                break;
+            default:
+                msg = NULL;
+                break;
+        }
 
-		if (*buf != '\0')
-			purple_notify_info(cmdproc->session->account->gc, NULL, buf, NULL);
-	}
+        if (msg)
+        {
+            PurpleAccount *account;
+            PurpleConnection *connection;
+            account = msn_session_get_user_data (cmdproc->session);
+            connection = purple_account_get_connection (account);
+            purple_notify_info (connection, NULL, msg, NULL);
+            g_free (msg);
+        }
+    }
 
-	g_hash_table_destroy(table);
-}
-
-/**************************************************************************
- * Dispatch server list management
- **************************************************************************/
-typedef struct MsnAddRemoveListData {
-	MsnCmdProc *cmdproc;
-	MsnUser *user;
-	MsnListOp list_op;
-	gboolean add;
-} MsnAddRemoveListData;
-
-static void
-modify_unknown_buddy_on_list(MsnSession *session, const char *passport,
-                             MsnNetwork network, gpointer data)
-{
-	MsnAddRemoveListData *addrem = data;
-	MsnCmdProc *cmdproc;
-	xmlnode *node;
-	char *payload;
-	int payload_len;
-
-	cmdproc = addrem->cmdproc;
-
-	/* Update user first */
-	msn_user_set_network(addrem->user, network);
-
-	node = xmlnode_new("ml");
-	node->child = NULL;
-
-	msn_add_contact_xml(node, passport, addrem->list_op, network);
-
-	payload = xmlnode_to_str(node, &payload_len);
-	xmlnode_free(node);
-
-	if (addrem->add)
-		msn_notification_post_adl(cmdproc, payload, payload_len);
-	else
-		msn_notification_post_rml(cmdproc, payload, payload_len);
-
-	g_free(payload);
-	g_free(addrem);
+    g_hash_table_destroy(table);
 }
 
 void
-msn_notification_add_buddy_to_list(MsnNotification *notification, MsnListId list_id,
-							  MsnUser *user)
+msn_notification_add_buddy(MsnNotification *notification, const char *list,
+                           const char *who, const gchar *user_guid, const char *store_name,
+                           const gchar *group_guid)
 {
-	MsnAddRemoveListData *addrem;
-	MsnCmdProc *cmdproc;
-	MsnListOp list_op = 1 << list_id;
-	xmlnode *adl_node;
-	char *payload;
-	int payload_len;
+    MsnCmdProc *cmdproc;
+    cmdproc = notification->cmdproc;
 
-	cmdproc = notification->servconn->cmdproc;
+    /* moogman: 
+     * If old_group_name == NULL, then ADC cmd is different.
+     * If a new buddy (as opposed to a buddy move), ADC cmd is different. 
+     * If !Fl, then do same as "new". */
+    if (user_guid && group_guid)
+    {
+        /* Buddy already in FL. Add it to group_guid. */
+        msn_cmdproc_send (cmdproc, "ADC", "%s C=%s %s", list, user_guid, group_guid);
+    }
+    else if (strcmp(list, "FL") == 0)
+    {
+        /* Add buddy to our FL. */
+        /* FunkTastic Foo! */
+        MsnTransaction *trans;
+        MsnAddBuddy *data;
 
-	adl_node = xmlnode_new("ml");
-	adl_node->child = NULL;
+        data = g_new0 (MsnAddBuddy, 1);
 
-	msn_add_contact_xml(adl_node, user->passport, list_op, user->networkid);
+        data->who = g_strdup (who);
+        data->group_guid = g_strdup (group_guid);
 
-	payload = xmlnode_to_str(adl_node, &payload_len);
-	xmlnode_free(adl_node);
+        trans = msn_transaction_new (cmdproc, "ADC", "%s N=%s F=%s",
+                                     list, who, purple_url_encode (store_name));
 
-	if (user->networkid != MSN_NETWORK_UNKNOWN) {
-		msn_notification_post_adl(cmdproc, payload, payload_len);
+        msn_transaction_set_data (trans, data);
 
-	} else {
-		addrem = g_new(MsnAddRemoveListData, 1);
-		addrem->cmdproc = cmdproc;
-		addrem->user = user;
-		addrem->list_op = list_op;
-		addrem->add = TRUE;
-
-		msn_notification_send_fqy(notification->session, payload, payload_len,
-		                          modify_unknown_buddy_on_list, addrem);
-	}
-
-	g_free(payload);
+        msn_cmdproc_send_trans (cmdproc, trans);
+    }
+    else
+    {
+        /* Add buddy to another list (BL, AL). */
+        msn_cmdproc_send (cmdproc, "ADC", "%s N=%s", list, who);
+    }
 }
 
 void
-msn_notification_rem_buddy_from_list(MsnNotification *notification, MsnListId list_id,
-						   MsnUser *user)
+msn_notification_rem_buddy(MsnNotification *notification, const char *list,
+                           const char *who, const gchar *user_guid, const gchar *group_guid)
 {
-	MsnAddRemoveListData *addrem;
-	MsnCmdProc *cmdproc;
-	MsnListOp list_op = 1 << list_id;
-	xmlnode *rml_node;
-	char *payload;
-	int payload_len;
+    MsnCmdProc *cmdproc;
+    const gchar *final_who;
 
-	cmdproc = notification->servconn->cmdproc;
+    cmdproc = notification->cmdproc;
+    final_who = ((strcmp (list, "FL") == 0) ? user_guid : who);
 
-	rml_node = xmlnode_new("ml");
-	rml_node->child = NULL;
-
-	msn_add_contact_xml(rml_node, user->passport, list_op, user->networkid);
-
-	payload = xmlnode_to_str(rml_node, &payload_len);
-	xmlnode_free(rml_node);
-
-	if (user->networkid != MSN_NETWORK_UNKNOWN) {
-		msn_notification_post_rml(cmdproc, payload, payload_len);
-
-	} else {
-		addrem = g_new(MsnAddRemoveListData, 1);
-		addrem->cmdproc = cmdproc;
-		addrem->user = user;
-		addrem->list_op = list_op;
-		addrem->add = FALSE;
-
-		msn_notification_send_fqy(notification->session, payload, payload_len,
-		                          modify_unknown_buddy_on_list, addrem);
-	}
-
-	g_free(payload);
+    /* moogman: If user is only in one group, set group_guid == NULL (force a complete remove).
+     * It seems as if we don't need to do the above check. I've tested it as it is and it seems 
+     * to work fine. However, a note is left here incase things change. */
+    if (group_guid)
+    {
+        msn_cmdproc_send (cmdproc, "REM", "%s %s %s", list, final_who, group_guid);
+    }
+    else
+    {
+        msn_cmdproc_send (cmdproc, "REM", "%s %s", list, final_who);
+    }
 }
 
 /**************************************************************************
  * Init
  **************************************************************************/
+
 void
 msn_notification_init(void)
 {
-	cbs_table = msn_table_new();
+    /* TODO: check prp, blp */
 
-	/* Synchronous */
-	msn_table_add_cmd(cbs_table, "CHG", "CHG", NULL);
-	msn_table_add_cmd(cbs_table, "CHG", "ILN", iln_cmd);
-	msn_table_add_cmd(cbs_table, "ADL", "ILN", iln_cmd);
-	msn_table_add_cmd(cbs_table, "USR", "USR", usr_cmd);
-	msn_table_add_cmd(cbs_table, "USR", "XFR", xfr_cmd);
-	msn_table_add_cmd(cbs_table, "USR", "GCF", gcf_cmd);
-	msn_table_add_cmd(cbs_table, "CVR", "CVR", cvr_cmd);
-	msn_table_add_cmd(cbs_table, "VER", "VER", ver_cmd);
-	msn_table_add_cmd(cbs_table, "PRP", "PRP", prp_cmd);
-	msn_table_add_cmd(cbs_table, "BLP", "BLP", blp_cmd);
-	msn_table_add_cmd(cbs_table, "XFR", "XFR", xfr_cmd);
+    cbs_table = msn_table_new();
 
-	/* Asynchronous */
-	msn_table_add_cmd(cbs_table, NULL, "IPG", ipg_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "MSG", msg_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "UBM", ubm_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "GCF", gcf_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "SBS", sbs_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "NOT", not_cmd);
+    /* Synchronous */
+    msn_table_add_cmd(cbs_table, "CHG", "CHG", chg_cmd);
+    msn_table_add_cmd(cbs_table, "CHG", "ILN", iln_cmd);
+    msn_table_add_cmd(cbs_table, "ADC", "ADC", adc_cmd);
+    msn_table_add_cmd(cbs_table, "ADC", "ILN", iln_cmd);
+    msn_table_add_cmd(cbs_table, "REM", "REM", rem_cmd);
+    msn_table_add_cmd(cbs_table, "USR", "USR", usr_cmd);
+    msn_table_add_cmd(cbs_table, "USR", "XFR", xfr_cmd);
+    msn_table_add_cmd(cbs_table, "SYN", "SYN", syn_cmd);
+    msn_table_add_cmd(cbs_table, "CVR", "CVR", cvr_cmd);
+    msn_table_add_cmd(cbs_table, "VER", "VER", ver_cmd);
+    /* msn_table_add_cmd(cbs_table, "REA", "REA", rea_cmd); */
+    msn_table_add_cmd(cbs_table, "SBP", "SBP", sbp_cmd);
+    msn_table_add_cmd(cbs_table, "PRP", "PRP", prp_cmd);
+    /* msn_table_add_cmd(cbs_table, "BLP", "BLP", blp_cmd); */
+    msn_table_add_cmd(cbs_table, "BLP", "BLP", NULL);
+    msn_table_add_cmd(cbs_table, "REG", "REG", reg_cmd);
+    msn_table_add_cmd(cbs_table, "ADG", "ADG", adg_cmd);
+    msn_table_add_cmd(cbs_table, "RMG", "RMG", rmg_cmd);
+    msn_table_add_cmd(cbs_table, "XFR", "XFR", xfr_cmd);
 
-	msn_table_add_cmd(cbs_table, NULL, "CHL", chl_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "RML", rml_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "ADL", adl_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "FQY", fqy_cmd);
+    /* Asynchronous */
+    msn_table_add_cmd(cbs_table, NULL, "IPG", ipg_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "MSG", msg_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "NOT", not_cmd);
 
-	msn_table_add_cmd(cbs_table, NULL, "QRY", NULL);
-	msn_table_add_cmd(cbs_table, NULL, "QNG", qng_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "FLN", fln_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "NLN", nln_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "ILN", iln_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "OUT", out_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "RNG", rng_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "CHL", chl_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "REM", rem_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "ADC", adc_cmd);
 
-	msn_table_add_cmd(cbs_table, NULL, "UBX", ubx_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "UUX", uux_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "QRY", NULL);
+    msn_table_add_cmd(cbs_table, NULL, "QNG", qng_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "FLN", fln_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "NLN", nln_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "ILN", iln_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "OUT", out_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "RNG", rng_cmd);
 
-	msn_table_add_cmd(cbs_table, NULL, "UBN", ubn_cmd);
-	msn_table_add_cmd(cbs_table, NULL, "UUN", uun_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "UBX", ubx_cmd);
 
-	msn_table_add_cmd(cbs_table, NULL, "URL", url_cmd);
+    msn_table_add_cmd(cbs_table, NULL, "URL", url_cmd);
 
-	msn_table_add_cmd(cbs_table, "fallback", "XFR", xfr_cmd);
+    /* avoid unhandled command warnings */
+    msn_table_add_cmd(cbs_table, NULL, "UUX", NULL);
+    msn_table_add_cmd(cbs_table, NULL, "SBS", NULL);
 
-	msn_table_add_error(cbs_table, "ADL", adl_error);
-	msn_table_add_error(cbs_table, "RML", rml_error);
-	msn_table_add_error(cbs_table, "FQY", fqy_error);
-	msn_table_add_error(cbs_table, "USR", usr_error);
+    msn_table_add_cmd(cbs_table, "fallback", "XFR", xfr_cmd);
 
-	msn_table_add_msg_type(cbs_table,
-						   "text/x-msmsgsprofile",
-						   profile_msg);
-	/*initial OIM notification*/
-	msn_table_add_msg_type(cbs_table,
-							"text/x-msmsgsinitialmdatanotification",
-							initial_mdata_msg);
-	/*OIM notification when user online*/
-	msn_table_add_msg_type(cbs_table,
-							"text/x-msmsgsoimnotification",
-							initial_mdata_msg);
-	msn_table_add_msg_type(cbs_table,
-						   "text/x-msmsgsinitialemailnotification",
-						   initial_email_msg);
-	msn_table_add_msg_type(cbs_table,
-						   "text/x-msmsgsemailnotification",
-						   email_msg);
-	/*delete an offline Message notification*/
-	msn_table_add_msg_type(cbs_table,
-							"text/x-msmsgsactivemailnotification",
-						   delete_oim_msg);
-	msn_table_add_msg_type(cbs_table,
-						   "application/x-msmsgssystemmessage",
-						   system_msg);
-	/* generic message handlers */
-	msn_table_add_msg_type(cbs_table, "text/plain",
-						   msn_plain_msg);
-	msn_table_add_msg_type(cbs_table, "text/x-msmsgscontrol",
-						   msn_control_msg);
-	msn_table_add_msg_type(cbs_table, "text/x-msnmsgr-datacast",
-						   msn_datacast_msg);
+    msn_table_add_error(cbs_table, "ADC", adc_error);
+    msn_table_add_error(cbs_table, "REG", reg_error);
+    msn_table_add_error(cbs_table, "RMG", rmg_error);
+    /* msn_table_add_error(cbs_table, "REA", rea_error); */
+    msn_table_add_error(cbs_table, "USR", usr_error);
+
+    msn_table_add_msg_type(cbs_table,
+                           "text/x-msmsgsprofile",
+                           profile_msg);
+    msn_table_add_msg_type(cbs_table,
+                           "text/x-msmsgsinitialmdatanotification",
+                           initial_mdata_msg);
+    msn_table_add_msg_type(cbs_table,
+                           "text/x-msmsgsoimnotification",
+                           oim_msg);
+    msn_table_add_msg_type(cbs_table,
+                           "text/x-msmsgsemailnotification",
+                           email_msg);
+    msn_table_add_msg_type(cbs_table,
+                           "application/x-msmsgssystemmessage",
+                           system_msg);
 }
 
 void
 msn_notification_end(void)
 {
-	msn_table_destroy(cbs_table);
+    msn_table_destroy(cbs_table);
 }
-

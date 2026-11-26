@@ -1,16 +1,11 @@
 /**
- * @file page.h Paging functions
+ * Copyright (C) 2004-2009 Felipe Contreras
+ * Copyright (C) 1998-2006 Pidgin (see pidgin-copyright)
  *
- * purple
- *
- * Purple is the legal property of its developers, whose names are too numerous
- * to list here.  Please refer to the COPYRIGHT file distributed with this
- * source distribution.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -19,10 +14,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111-1301  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
-#ifndef MSN_PAGE_H
-#define MSN_PAGE_H
+
+#ifndef _MSN_PAGE_H_
+#define _MSN_PAGE_H_
 
 typedef struct _MsnPage MsnPage;
 
@@ -33,10 +29,10 @@ typedef struct _MsnPage MsnPage;
  */
 struct _MsnPage
 {
-	char *from_location;
-	char *from_phone;
+    char *from_location;
+    char *from_phone;
 
-	char *body;
+    char *body;
 };
 
 /**
@@ -78,4 +74,4 @@ void msn_page_set_body(MsnPage *page, const char *body);
  */
 const char *msn_page_get_body(const MsnPage *page);
 
-#endif /* MSN_PAGE_H */
+#endif /* _MSN_PAGE_H_ */

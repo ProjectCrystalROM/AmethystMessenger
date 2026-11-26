@@ -1313,6 +1313,10 @@ for i in $DYNAMIC_PRPLS ; do
 	esac
 done
 
+if test "x$static_msn" = "xyes" || test "x$dynamic_msn" = "xyes"; then
+	PKG_CHECK_MODULES([MSN_GIO], [gio-2.0 >= 2.22])
+fi
+
 AC_ARG_ENABLE(plugins, [AC_HELP_STRING([--disable-plugins], [compile without plugin support])], , enable_plugins=yes)
 AC_ARG_WITH(krb4, [AC_HELP_STRING([--with-krb4=PREFIX], [compile Zephyr plugin with Kerberos 4 support])], kerberos="$withval", kerberos="no")
 AC_ARG_WITH(zephyr, [AC_HELP_STRING([--with-zephyr=PREFIX], [compile Zephyr plugin against external libzephyr])], zephyr="$withval", zephyr="no")

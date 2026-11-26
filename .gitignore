@@ -1,0 +1,5 @@
+/VERSION
+/autom4te.cache/
+/win32-install-dir/
+/libpurple/protocols/msn/win32/resource.res
+/share/ca-certs/Makefile.am.mingw
