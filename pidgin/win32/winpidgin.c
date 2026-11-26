@@ -653,7 +653,7 @@ WinMain (struct HINSTANCE__ *hInstance, struct HINSTANCE__ *hPrevInstance,
 					}
 					if (pidgin_dir_ansi != NULL) {
 						_snprintf(debug_dir, sizeof(debug_dir),
-							"%s\\pidgin-%s-dbgsym",
+							"%s\\amethyst-%s-dbgsym",
 							pidgin_dir_ansi,  VERSION);
 						debug_dir[sizeof(debug_dir) - 1] = '\0';
 						printf(" Setting exchndl.dll DebugInfoDir to %s\n",
