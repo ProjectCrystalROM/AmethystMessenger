@@ -193,11 +193,11 @@ winprefs_set_autostart(GtkWidget *w) {
 	char *runval = NULL;
 
 	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w)))
-		runval = g_strdup_printf("\"%s" G_DIR_SEPARATOR_S "pidgin.exe\"", wpurple_install_dir());
+		runval = g_strdup_printf("\"%s" G_DIR_SEPARATOR_S "amethyst.exe\"", wpurple_install_dir());
 
-	if(!wpurple_write_reg_string(HKEY_CURRENT_USER, RUNKEY, "Pidgin", runval)
+	if(!wpurple_write_reg_string(HKEY_CURRENT_USER, RUNKEY, "Amethyst Messenger", runval)
 		/* For Win98 */
-		&& !wpurple_write_reg_string(HKEY_LOCAL_MACHINE, RUNKEY, "Pidgin", runval))
+		&& !wpurple_write_reg_string(HKEY_LOCAL_MACHINE, RUNKEY, "Amethyst Messenger", runval))
 			purple_debug_error(WINPREFS_PLUGIN_ID, "Could not set registry key value\n");
 
 	g_free(runval);
@@ -282,8 +282,8 @@ static GtkWidget* get_config_frame(PurplePlugin *plugin) {
 	button = gtk_check_button_new_with_mnemonic(tmp);
 	g_free(tmp);
 	gtk_box_pack_start(GTK_BOX(vbox), button, FALSE, FALSE, 0);
-	if ((run_key_val = wpurple_read_reg_string(HKEY_CURRENT_USER, RUNKEY, "Pidgin"))
-			|| (run_key_val = wpurple_read_reg_string(HKEY_LOCAL_MACHINE, RUNKEY, "Pidgin"))) {
+	if ((run_key_val = wpurple_read_reg_string(HKEY_CURRENT_USER, RUNKEY, "Amethyst Messenger"))
+			|| (run_key_val = wpurple_read_reg_string(HKEY_LOCAL_MACHINE, RUNKEY, "Amethyst Messenger"))) {
 		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(button), TRUE);
 		g_free(run_key_val);
 	}
@@ -340,12 +340,12 @@ static PurplePluginInfo info =
 	NULL,
 	PURPLE_PRIORITY_DEFAULT,
 	WINPREFS_PLUGIN_ID,
-	N_("Windows Pidgin Options"),
+	N_("Windows Amethyst Options"),
 	DISPLAY_VERSION,
-	N_("Options specific to Pidgin for Windows."),
-	N_("Provides options specific to Pidgin for Windows, such as buddy list docking."),
+	N_("Options specific to Amethyst Messenger for Windows."),
+	N_("Provides options specific to Amethyst Messenger for Windows, such as buddy list docking."),
 	"Herman Bloggs <hermanator12002@yahoo.com>",
-	PURPLE_WEBSITE,
+	AMETHYST_PROJECT_URL,
 	plugin_load,
 	plugin_unload,
 	NULL,

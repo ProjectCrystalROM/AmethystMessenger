@@ -4,3 +4,26 @@
 /libpurple/protocols/msn/win32/resource.res
 /share/ca-certs/Makefile.am.mingw
 /libpurple/protocols/msn/Makefile
+
+# Local build products and machine-specific setup
+*.o
+*.dll
+*.exe
+*.res
+*.a
+*.def
+*.dll.a
+*.rc
+*.am.mingw
+/config.h
+/config.log
+/config.status
+/autom4te.cache/
+/amethyst
+/amethyst.exe
+/pidgin.dll
+/libpurple.dll
+/pidgin-2.11.0-win32bin/
+/pidgin-2.11.0-dbgsym/
+/.amethyst-build/
+/output/
