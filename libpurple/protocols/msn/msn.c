@@ -1873,7 +1873,7 @@ static PurplePluginInfo info =
     PURPLE_PRIORITY_DEFAULT, /**< priority */
 
     PLUGIN_ID, /**< id */
-    "CrossTalk (MSNP)", /**< name */
+    "MSN", /**< name */
     VERSION, /**< version */
     N_("CrossTalk (MSNP)"), /**< summary */
     N_("CrossTalk (MSNP)"), /**< description */

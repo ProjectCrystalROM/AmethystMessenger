@@ -1,14 +1,14 @@
 # Pidgin 2.11.0 for CrossTalk
 
 This fork builds CrossTalk Pecan as Pidgin's in-tree MSN protocol.
-Select **CrossTalk (MSNP)** in the account dialog. The protocol ID is
+Select **MSN** in the account dialog. The protocol ID is
 `prpl-msn-pecan`, the same as the standalone CrossTalk plugin.
 The Windows and Unix build products are named `libmsn.dll` and `libmsn.so`.
 
 Pecan is vendored from [CrossTalk's repository](https://git.ugnet.xyz/CrossTalk/msn-pecan)
 at commit `b5132e75b879c0e90e881f1403bc4057ead3ae68`.
 The integration uses Pidgin's ordinary MSN protocol and install targets.
-Pecan's C source is unchanged. The Unix build needs GIO 2.22 or later
+The protocol picker uses the original MSN label. The Unix build needs GIO 2.22 or later
 when the MSN protocol is selected.
 
 ## Windows build
