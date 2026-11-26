@@ -195,9 +195,9 @@ static BOOL dll_prep(const wchar_t *pidgin_dir) {
 }
 
 static void portable_mode_dll_prep(const wchar_t *pidgin_dir) {
-	/* need to be able to fit MAX_PATH + "PURPLEHOME=" in path2 */
+	/* need to be able to fit MAX_PATH + "AMETHYST_PORTABLE_HOME=" in path2 */
 	wchar_t path[MAX_PATH + 1];
-	wchar_t path2[MAX_PATH + 12];
+	wchar_t path2[MAX_PATH + 26];
 	const wchar_t *prev = NULL;
 
 	/* We assume that GTK+ is installed under \\path\to\Pidgin\..\GTK
@@ -224,7 +224,7 @@ static void portable_mode_dll_prep(const wchar_t *pidgin_dir) {
 
 	/* Set up the settings dir base to be \\path\to
 	 * The actual settings dir will be \\path\to\.purple */
-	_snwprintf(path2, sizeof(path2) / sizeof(wchar_t), L"PURPLEHOME=%s", path);
+	_snwprintf(path2, sizeof(path2) / sizeof(wchar_t), L"AMETHYST_PORTABLE_HOME=%s", path);
 	wprintf(L"Setting settings dir: %s\n", path2);
 	_wputenv(path2);
 
@@ -392,7 +392,7 @@ static const wchar_t *winpidgin_get_locale() {
 	if ((locale = _wgetenv(L"PIDGINLANG")))
 		return locale;
 
-	if (!portable_mode && read_reg_string(HKEY_CURRENT_USER, L"SOFTWARE\\pidgin",
+	if (!portable_mode && read_reg_string(HKEY_CURRENT_USER, L"Software\\Amethyst Messenger",
 			L"Installer Language", (LPBYTE) &data, &datalen)) {
 		if ((locale = winpidgin_lcid_to_posix(_wtoi(data))))
 			return locale;
@@ -422,28 +422,28 @@ static void winpidgin_set_locale() {
 static BOOL winpidgin_set_running(BOOL fail_if_running) {
 	HANDLE h;
 
-	if ((h = CreateMutexW(NULL, FALSE, L"pidgin_is_running"))) {
+	if ((h = CreateMutexW(NULL, FALSE, L"amethyst_messenger_is_running"))) {
 		DWORD err = GetLastError();
 		if (err == ERROR_ALREADY_EXISTS) {
 			if (fail_if_running) {
 				HWND msg_win;
 
-				printf("An instance of Pidgin is already running.\n");
+				printf("An instance of Amethyst Messenger is already running.\n");
 
-				if((msg_win = FindWindowExW(NULL, NULL, L"WinpidginMsgWinCls", NULL)))
+				if((msg_win = FindWindowExW(NULL, NULL, L"AmethystMsgWinCls", NULL)))
 					if(SendMessage(msg_win, PIDGIN_WM_FOCUS_REQUEST, (WPARAM) NULL, (LPARAM) NULL))
 						return FALSE;
 
 				/* If we get here, the focus request wasn't successful */
 
 				MessageBoxW(NULL,
-					L"An instance of Pidgin is already running",
+					L"An instance of Amethyst Messenger is already running",
 					NULL, MB_OK | MB_TOPMOST);
 
 				return FALSE;
 			}
 		} else if (err != ERROR_SUCCESS)
-			printf("Error (%u) accessing \"pidgin_is_running\" mutex.\n", (UINT) err);
+			printf("Error (%u) accessing \"amethyst_messenger_is_running\" mutex.\n", (UINT) err);
 	}
 	return TRUE;
 }
@@ -473,8 +473,8 @@ static void handle_protocol(wchar_t *cmd) {
 		return;
 	}
 
-	if (!(msg_win = FindWindowExW(NULL, NULL, L"WinpidginMsgWinCls", NULL))) {
-		printf("Unable to find an instance of Pidgin to handle protocol message.\n");
+	if (!(msg_win = FindWindowExW(NULL, NULL, L"AmethystMsgWinCls", NULL))) {
+		printf("Unable to find an instance of Amethyst Messenger to handle protocol message.\n");
 		return;
 	}
 
@@ -495,7 +495,7 @@ static void handle_protocol(wchar_t *cmd) {
 	if (!(process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, FALSE, pid))) {
 		DWORD dw = GetLastError();
 		const wchar_t *err_msg = get_win32_error_message(dw);
-		wprintf(L"Unable to open Pidgin process. (%u) %s\n", (UINT) dw, err_msg);
+		wprintf(L"Unable to open Amethyst Messenger process. (%u) %s\n", (UINT) dw, err_msg);
 		return;
 	}
 
@@ -506,7 +506,7 @@ static void handle_protocol(wchar_t *cmd) {
 	if ((remote_msg = (char*) VirtualAllocEx(process, NULL, len + 1, MEM_COMMIT, PAGE_READWRITE))) {
 		if (WriteProcessMemory(process, remote_msg, utf8msg, len, &len_written)) {
 			if (!SendMessageA(msg_win, PIDGIN_WM_PROTOCOL_HANDLE, len_written, (LPARAM) remote_msg))
-				printf("Unable to send protocol message to Pidgin instance.\n");
+				printf("Unable to send protocol message to Amethyst Messenger.\n");
 		} else {
 			DWORD dw = GetLastError();
 			const wchar_t *err_msg = get_win32_error_message(dw);
@@ -627,7 +627,7 @@ WinMain (struct HINSTANCE__ *hInstance, struct HINSTANCE__ *hPrevInstance,
 				MySetLogFile = (LPFNSETLOGFILE) GetProcAddress(hmod, "SetLogFile");
 				if (MySetLogFile) {
 					if (GetTempPathA(sizeof(debug_dir), debug_dir) != 0) {
-						strcat(debug_dir, "pidgin.RPT");
+						strcat(debug_dir, "amethyst.RPT");
 						printf(" Setting exchndl.dll LogFile to %s\n",
 							debug_dir);
 						MySetLogFile(debug_dir);

@@ -205,12 +205,12 @@ am__dist_pidginpixmaptray48_DATA_DIST =  \
 	tray/hicolor/48x48/status/pidgin-tray-offline.png \
 	tray/hicolor/48x48/status/pidgin-tray-available.png
 am__nobase_dist_pidginicons_DATA_DIST =  \
-	icons/hicolor/16x16/apps/pidgin.png \
-	icons/hicolor/22x22/apps/pidgin.png \
-	icons/hicolor/24x24/apps/pidgin.png \
-	icons/hicolor/32x32/apps/pidgin.png \
-	icons/hicolor/48x48/apps/pidgin.png \
-	icons/hicolor/scalable/apps/pidgin.svg
+	icons/hicolor/16x16/apps/amethyst.png \
+	icons/hicolor/22x22/apps/amethyst.png \
+	icons/hicolor/24x24/apps/amethyst.png \
+	icons/hicolor/32x32/apps/amethyst.png \
+	icons/hicolor/48x48/apps/amethyst.png \
+	icons/hicolor/scalable/apps/amethyst.svg
 am__nobase_dist_pidginpixmap_DATA_DIST = animations/16/connect0.png \
 	animations/16/connect1.png animations/16/connect2.png \
 	animations/16/connect3.png animations/16/connect4.png \
@@ -577,6 +577,8 @@ MONO_LIBS = @MONO_LIBS@
 MSGFMT = @MSGFMT@
 MSGFMT_OPTS = @MSGFMT_OPTS@
 MSGMERGE = @MSGMERGE@
+MSN_GIO_CFLAGS = @MSN_GIO_CFLAGS@
+MSN_GIO_LIBS = @MSN_GIO_LIBS@
 NETWORKMANAGER_CFLAGS = @NETWORKMANAGER_CFLAGS@
 NETWORKMANAGER_LIBS = @NETWORKMANAGER_LIBS@
 NM = @NM@
@@ -950,20 +952,20 @@ SUBDIRS = emotes/default/24 emotes/none emotes/small/16
 @INSTALL_PIXMAPS_TRUE@		protocols/16/zephyr.png
 
 @INSTALL_PIXMAPS_TRUE@ICONS_16_SCALABLE = \
-@INSTALL_PIXMAPS_TRUE@		icons/hicolor/16x16/apps/scalable/pidgin.svg
+@INSTALL_PIXMAPS_TRUE@		icons/hicolor/16x16/apps/scalable/amethyst.svg
 
-@INSTALL_PIXMAPS_TRUE@ICONS_16 = icons/hicolor/16x16/apps/pidgin.png
-@INSTALL_PIXMAPS_TRUE@ICONS_22 = icons/hicolor/22x22/apps/pidgin.png
+@INSTALL_PIXMAPS_TRUE@ICONS_16 = icons/hicolor/16x16/apps/amethyst.png
+@INSTALL_PIXMAPS_TRUE@ICONS_22 = icons/hicolor/22x22/apps/amethyst.png
 @INSTALL_PIXMAPS_TRUE@ICONS_24_SCALABLE = \
-@INSTALL_PIXMAPS_TRUE@		icons/hicolor/24x24/apps/scalable/pidgin.svg
+@INSTALL_PIXMAPS_TRUE@		icons/hicolor/24x24/apps/scalable/amethyst.svg
 
-@INSTALL_PIXMAPS_TRUE@ICONS_24 = icons/hicolor/24x24/apps/pidgin.png
+@INSTALL_PIXMAPS_TRUE@ICONS_24 = icons/hicolor/24x24/apps/amethyst.png
 @INSTALL_PIXMAPS_TRUE@ICONS_32_SCALABLE = \
-@INSTALL_PIXMAPS_TRUE@		icons/hicolor/32x32/apps/scalable/pidgin.svg
+@INSTALL_PIXMAPS_TRUE@		icons/hicolor/32x32/apps/scalable/amethyst.svg
 
-@INSTALL_PIXMAPS_TRUE@ICONS_32 = icons/hicolor/32x32/apps/pidgin.png
-@INSTALL_PIXMAPS_TRUE@ICONS_48 = icons/hicolor/48x48/apps/pidgin.png
-@INSTALL_PIXMAPS_TRUE@ICONS_SCALABLE = icons/hicolor/scalable/apps/pidgin.svg
+@INSTALL_PIXMAPS_TRUE@ICONS_32 = icons/hicolor/32x32/apps/amethyst.png
+@INSTALL_PIXMAPS_TRUE@ICONS_48 = icons/hicolor/48x48/apps/amethyst.png
+@INSTALL_PIXMAPS_TRUE@ICONS_SCALABLE = icons/hicolor/scalable/apps/amethyst.svg
 @INSTALL_PIXMAPS_TRUE@PROTOCOLS_22_SCALABLE = \
 @INSTALL_PIXMAPS_TRUE@		protocols/22/scalable/aim.svg \
 @INSTALL_PIXMAPS_TRUE@		protocols/22/scalable/bonjour.svg \

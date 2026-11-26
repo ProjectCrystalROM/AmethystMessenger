@@ -80,10 +80,10 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
-@ENABLE_GTK_TRUE@bin_PROGRAMS = pidgin$(EXEEXT)
+@ENABLE_GTK_TRUE@bin_PROGRAMS = amethyst$(EXEEXT)
 subdir = pidgin
-DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am getopt1.c \
-	getopt.c $(top_srcdir)/depcomp \
+DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am getopt.c \
+	getopt1.c $(top_srcdir)/depcomp \
 	$(am__pidgininclude_HEADERS_DIST)
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
@@ -98,7 +98,7 @@ am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(appdatadir)" \
 	"$(DESTDIR)$(appsdir)" "$(DESTDIR)$(pkgconfigdir)" \
 	"$(DESTDIR)$(pidginincludedir)"
 PROGRAMS = $(bin_PROGRAMS)
-am__pidgin_SOURCES_DIST = pidginstock.c gtkaccount.c gtkblist.c \
+am__amethyst_SOURCES_DIST = pidginstock.c gtkaccount.c gtkblist.c \
 	gtkblist-theme.c gtkblist-theme-loader.c \
 	gtkcellrendererexpander.c gtkcertmgr.c gtkconn.c gtkconv.c \
 	gtkdebug.c gtkdialogs.c gtkdnd-hints.c gtkdocklet.c \
@@ -111,7 +111,7 @@ am__pidgin_SOURCES_DIST = pidginstock.c gtkaccount.c gtkblist.c \
 	gtksourceiter.c gtksourceundomanager.c gtksourceview-marshal.c \
 	gtkstatus-icon-theme.c gtkstatusbox.c gtkthemes.c gtkutils.c \
 	gtkwhiteboard.c minidialog.c pidgintooltip.c
-@ENABLE_GTK_TRUE@am_pidgin_OBJECTS = pidginstock.$(OBJEXT) \
+@ENABLE_GTK_TRUE@am_amethyst_OBJECTS = pidginstock.$(OBJEXT) \
 @ENABLE_GTK_TRUE@	gtkaccount.$(OBJEXT) gtkblist.$(OBJEXT) \
 @ENABLE_GTK_TRUE@	gtkblist-theme.$(OBJEXT) \
 @ENABLE_GTK_TRUE@	gtkblist-theme-loader.$(OBJEXT) \
@@ -141,15 +141,15 @@ am__pidgin_SOURCES_DIST = pidginstock.c gtkaccount.c gtkblist.c \
 @ENABLE_GTK_TRUE@	gtkstatusbox.$(OBJEXT) gtkthemes.$(OBJEXT) \
 @ENABLE_GTK_TRUE@	gtkutils.$(OBJEXT) gtkwhiteboard.$(OBJEXT) \
 @ENABLE_GTK_TRUE@	minidialog.$(OBJEXT) pidgintooltip.$(OBJEXT)
-pidgin_OBJECTS = $(am_pidgin_OBJECTS)
+amethyst_OBJECTS = $(am_amethyst_OBJECTS)
 am__DEPENDENCIES_1 =
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
 am__v_lt_1 = 
-pidgin_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
+amethyst_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
-	$(pidgin_LDFLAGS) $(LDFLAGS) -o $@
+	$(amethyst_LDFLAGS) $(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -184,8 +184,8 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
-SOURCES = $(pidgin_SOURCES)
-DIST_SOURCES = $(am__pidgin_SOURCES_DIST)
+SOURCES = $(amethyst_SOURCES)
+DIST_SOURCES = $(am__amethyst_SOURCES_DIST)
 RECURSIVE_TARGETS = all-recursive check-recursive cscopelist-recursive \
 	ctags-recursive dvi-recursive html-recursive info-recursive \
 	install-data-recursive install-dvi-recursive \
@@ -421,6 +421,8 @@ MONO_LIBS = @MONO_LIBS@
 MSGFMT = @MSGFMT@
 MSGFMT_OPTS = @MSGFMT_OPTS@
 MSGMERGE = @MSGMERGE@
+MSN_GIO_CFLAGS = @MSN_GIO_CFLAGS@
+MSN_GIO_LIBS = @MSN_GIO_LIBS@
 NETWORKMANAGER_CFLAGS = @NETWORKMANAGER_CFLAGS@
 NETWORKMANAGER_LIBS = @NETWORKMANAGER_LIBS@
 NM = @NM@
@@ -561,8 +563,8 @@ EXTRA_DIST = \
 		getopt.h \
 		getopt1.c \
 		Makefile.mingw \
-		data/pidgin.appdata.xml.in \
-		data/pidgin.desktop.in \
+		data/amethyst.appdata.xml.in \
+		data/amethyst.desktop.in \
 		data/pidgin.pc.in \
 		data/pidgin-uninstalled.pc.in \
 		win32/MinimizeToTray.h \
@@ -590,7 +592,7 @@ EXTRA_DIST = \
 		win32/nsis/nsis_translations.desktop.in
 
 @ENABLE_GTK_TRUE@SUBDIRS = pixmaps plugins
-@ENABLE_GTK_TRUE@pidgin_SOURCES = \
+@ENABLE_GTK_TRUE@amethyst_SOURCES = \
 @ENABLE_GTK_TRUE@	pidginstock.c \
 @ENABLE_GTK_TRUE@	gtkaccount.c \
 @ENABLE_GTK_TRUE@	gtkblist.c \
@@ -696,9 +698,9 @@ EXTRA_DIST = \
 @ENABLE_GTK_TRUE@pidgininclude_HEADERS = \
 @ENABLE_GTK_TRUE@	$(pidgin_headers)
 
-@ENABLE_GTK_TRUE@pidgin_DEPENDENCIES = @LIBOBJS@
-@ENABLE_GTK_TRUE@pidgin_LDFLAGS = -export-dynamic
-@ENABLE_GTK_TRUE@pidgin_LDADD = \
+@ENABLE_GTK_TRUE@amethyst_DEPENDENCIES = @LIBOBJS@
+@ENABLE_GTK_TRUE@amethyst_LDFLAGS = -export-dynamic
+@ENABLE_GTK_TRUE@amethyst_LDADD = \
 @ENABLE_GTK_TRUE@	@LIBOBJS@ \
 @ENABLE_GTK_TRUE@	$(GLIB_LIBS) \
 @ENABLE_GTK_TRUE@	$(DBUS_LIBS) \
@@ -732,13 +734,13 @@ EXTRA_DIST = \
 
 @ENABLE_GTK_TRUE@pkgconfigdir = $(libdir)/pkgconfig
 @ENABLE_GTK_TRUE@pkgconfig_DATA = data/pidgin.pc
-@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@DESKTOP_FILE = data/pidgin.desktop
+@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@DESKTOP_FILE = data/amethyst.desktop
 @ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@appsdir = $(datadir)/applications
-@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@apps_in_files = data/pidgin.desktop.in
+@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@apps_in_files = data/amethyst.desktop.in
 @ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@apps_DATA = $(apps_in_files:.desktop.in=.desktop)
 @ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@appdatadir = $(datarootdir)/appdata
 @ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@appdata_DATA = $(appdata_in_files:.xml.in=.xml)
-@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@appdata_in_files = data/pidgin.appdata.xml.in
+@ENABLE_GTK_TRUE@@INSTALL_I18N_TRUE@appdata_in_files = data/amethyst.appdata.xml.in
 @ENABLE_GTK_TRUE@CLEANFILES = $(appdata_DATA)
 @ENABLE_GTK_TRUE@DISTCLEANFILES = $(DESKTOP_FILE)
 all: all-recursive
@@ -825,9 +827,9 @@ clean-binPROGRAMS:
 	echo " rm -f" $$list; \
 	rm -f $$list
 
-pidgin$(EXEEXT): $(pidgin_OBJECTS) $(pidgin_DEPENDENCIES) $(EXTRA_pidgin_DEPENDENCIES) 
-	@rm -f pidgin$(EXEEXT)
-	$(AM_V_CCLD)$(pidgin_LINK) $(pidgin_OBJECTS) $(pidgin_LDADD) $(LIBS)
+amethyst$(EXEEXT): $(amethyst_OBJECTS) $(amethyst_DEPENDENCIES) $(EXTRA_amethyst_DEPENDENCIES)
+	@rm -f amethyst$(EXEEXT)
+	$(AM_V_CCLD)$(amethyst_LINK) $(amethyst_OBJECTS) $(amethyst_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)

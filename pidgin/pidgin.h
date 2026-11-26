@@ -48,7 +48,8 @@
 
 /* Translators may want to transliterate the name.
  It is not to be translated. */
-#define PIDGIN_NAME _("Pidgin")
+#define PIDGIN_NAME _("Amethyst Messenger")
+#define AMETHYST_PROJECT_URL "https://github.com/ProjectCrystalROM/AmethystMessenger"
 
 #ifndef _WIN32
 # define PIDGIN_ALERT_TITLE ""

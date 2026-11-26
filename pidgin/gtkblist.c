@@ -830,7 +830,7 @@ static void gtk_blist_show_systemlog_cb(void)
 
 static void gtk_blist_show_onlinehelp_cb(void)
 {
-	purple_notify_uri(NULL, PURPLE_WEBSITE "documentation");
+	purple_notify_uri(NULL, AMETHYST_PROJECT_URL "#readme");
 }
 
 static void
@@ -5102,7 +5102,7 @@ generic_error_destroy_cb(GtkObject *dialog,
 		purple_account_clear_current_error(account);
 }
 
-#define SSL_FAQ_URI "http://d.pidgin.im/wiki/FAQssl"
+#define SSL_FAQ_URI AMETHYST_PROJECT_URL "#known-limitations"
 
 static void
 ssl_faq_clicked_cb(PidginMiniDialog *mini_dialog,
@@ -5773,7 +5773,7 @@ static void pidgin_blist_show(PurpleBuddyList *list)
 	gtkblist->empty_avatar = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 32, 32);
 	gdk_pixbuf_fill(gtkblist->empty_avatar, 0x00000000);
 
-	gtkblist->window = pidgin_create_window(_("Buddy List"), 0, "buddy_list", TRUE);
+	gtkblist->window = pidgin_create_window(_("Amethyst Messenger – Buddy List"), 0, "buddy_list", TRUE);
 	g_signal_connect(G_OBJECT(gtkblist->window), "focus-in-event",
 			 G_CALLBACK(blist_focus_cb), gtkblist);
 	g_signal_connect(G_OBJECT(gtkblist->window), "focus-out-event",

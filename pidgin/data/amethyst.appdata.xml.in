@@ -3,27 +3,13 @@
 <!-- Copyright 2014 Pidgin Developers <devel@pidgin.im> -->
 
 <application>
-  <id type="desktop">pidgin.desktop</id>
+  <id type="desktop">amethyst.desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-2.0</project_license>
-  <_summary>Instant Messaging Client</_summary>
+  <project_license>GPL-2.0-or-later</project_license>
+  <_summary>Legacy-friendly multiprotocol instant messaging</_summary>
   <description>
-    <_p>
-      Pidgin is a chat program which lets you log in to accounts on multiple
-      chat networks simultaneously.
-    </_p>
-    <_p>
-      This means that you can be chatting with friends on MSN, talking to a
-      friend on Google Talk, and sitting in a Yahoo chat room all at the same
-      time.
-    </_p>
+    <_p>Amethyst Messenger preserves classic desktop messaging on historical operating systems. It is derived from Pidgin 2.11.0 and connects to MSN through CrossTalk.</_p>
   </description>
-  <url type="homepage">http://www.pidgin.im/</url>
-  <screenshots>
-    <screenshot type="default">
-      <image>http://www.pidgin.im/shared/img/contact_window.png</image>
-      <_caption>The buddy list showing friends on different networks.</_caption>
-    </screenshot>
-  </screenshots>
-  <updatecontact>devel@pidgin.im</updatecontact>
+  <url type="homepage">https://github.com/ProjectCrystalROM/AmethystMessenger</url>
+  <url type="bugtracker">https://github.com/ProjectCrystalROM/AmethystMessenger/issues</url>
 </application>

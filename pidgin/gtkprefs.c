@@ -421,7 +421,7 @@ pref_sound_generate_markup(void)
 				g_free(name);
 				name = g_strdup(_("Default"));
 				author = _("Penguin Pimps");
-				description = _("The default Pidgin sound theme");
+				description = _("The default Amethyst sound theme");
 			} else {
 				theme = PURPLE_SOUND_THEME(purple_theme_manager_find_theme(name, "sound"));
 				author = purple_theme_get_author(PURPLE_THEME(theme));
@@ -528,7 +528,7 @@ prefs_themes_refresh(void)
 	/* refresh the list of themes in the manager */
 	purple_theme_manager_refresh();
 
-	tmp = g_build_filename(DATADIR, "icons", "hicolor", "32x32", "apps", "pidgin.png", NULL);
+	tmp = g_build_filename(DATADIR, "icons", "hicolor", "32x32", "apps", "amethyst.png", NULL);
 	pixbuf = pidgin_pixbuf_new_from_file_at_scale(tmp, PREFS_OPTIMAL_ICON_SIZE, PREFS_OPTIMAL_ICON_SIZE, TRUE);
 	g_free(tmp);
 
@@ -541,7 +541,7 @@ prefs_themes_refresh(void)
 	gtk_list_store_clear(prefs_blist_themes);
 	gtk_list_store_append(prefs_blist_themes, &iter);
 	tmp = get_theme_markup(_("Default"), FALSE, _("Penguin Pimps"),
-		_("The default Pidgin buddy list theme"));
+		_("The default Amethyst buddy list theme"));
 	gtk_list_store_set(prefs_blist_themes, &iter, 0, pixbuf, 1, tmp, 2, "", -1);
 	g_free(tmp);
 
@@ -549,7 +549,7 @@ prefs_themes_refresh(void)
 	gtk_list_store_clear(prefs_status_icon_themes);
 	gtk_list_store_append(prefs_status_icon_themes, &iter);
 	tmp = get_theme_markup(_("Default"), FALSE, _("Penguin Pimps"),
-		_("The default Pidgin status icon theme"));
+		_("The default Amethyst status icon theme"));
 	gtk_list_store_set(prefs_status_icon_themes, &iter, 0, pixbuf, 1, tmp, 2, "", -1);
 	g_free(tmp);
 	if (pixbuf)

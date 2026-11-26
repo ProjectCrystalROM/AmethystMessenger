@@ -266,7 +266,7 @@ static HWND winpidgin_message_window_init(void) {
 	WNDCLASSEX wcx;
 	LPCTSTR wname;
 
-	wname = TEXT("WinpidginMsgWinCls");
+	wname = TEXT("AmethystMsgWinCls");
 
 	wcx.cbSize = sizeof(wcx);
 	wcx.style = 0;
@@ -398,7 +398,7 @@ void winpidgin_init(HINSTANCE hint) {
 	if (MySetLogFile) {
 		gchar *debug_dir, *locale_debug_dir;
 
-		debug_dir = g_build_filename(purple_user_dir(), "pidgin.RPT", NULL);
+		debug_dir = g_build_filename(purple_user_dir(), "amethyst.RPT", NULL);
 		locale_debug_dir = g_locale_from_utf8(debug_dir, -1, NULL, NULL, NULL);
 
 		purple_debug_info("winpidgin", "Setting exchndl.dll LogFile to %s\n", debug_dir);

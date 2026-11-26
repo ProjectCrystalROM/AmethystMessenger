@@ -239,25 +239,25 @@ PROTOCOLS_16 = \
 		protocols/16/zephyr.png
 
 ICONS_16_SCALABLE = \
-		icons/hicolor/16x16/apps/scalable/pidgin.svg
+		icons/hicolor/16x16/apps/scalable/amethyst.svg
 
-ICONS_16 = icons/hicolor/16x16/apps/pidgin.png
+ICONS_16 = icons/hicolor/16x16/apps/amethyst.png
 
-ICONS_22 = icons/hicolor/22x22/apps/pidgin.png
+ICONS_22 = icons/hicolor/22x22/apps/amethyst.png
 
 ICONS_24_SCALABLE = \
-		icons/hicolor/24x24/apps/scalable/pidgin.svg
+		icons/hicolor/24x24/apps/scalable/amethyst.svg
 
-ICONS_24 = icons/hicolor/24x24/apps/pidgin.png
+ICONS_24 = icons/hicolor/24x24/apps/amethyst.png
 
 ICONS_32_SCALABLE = \
-		icons/hicolor/32x32/apps/scalable/pidgin.svg
+		icons/hicolor/32x32/apps/scalable/amethyst.svg
 
-ICONS_32 = icons/hicolor/32x32/apps/pidgin.png
+ICONS_32 = icons/hicolor/32x32/apps/amethyst.png
 
-ICONS_48 = icons/hicolor/48x48/apps/pidgin.png
+ICONS_48 = icons/hicolor/48x48/apps/amethyst.png
 
-ICONS_SCALABLE = icons/hicolor/scalable/apps/pidgin.svg
+ICONS_SCALABLE = icons/hicolor/scalable/apps/amethyst.svg
 
 PROTOCOLS_22_SCALABLE = \
 		protocols/22/scalable/aim.svg \

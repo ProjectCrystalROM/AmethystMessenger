@@ -2627,7 +2627,7 @@ AC_CONFIG_FILES([Makefile
 		   m4macros/Makefile
 		   pidgin.apspec
 		   pidgin/Makefile
-		   pidgin/data/pidgin.desktop.in
+		   pidgin/data/amethyst.desktop.in
 		   pidgin/data/pidgin.pc
 		   pidgin/data/pidgin-uninstalled.pc
 		   pidgin/data/pidgin-2.pc
@@ -2754,7 +2754,7 @@ fi
 if test "x$enable_i18n" = "xno" ; then
 	echo
 	echo Warning: You have disabled the building and installation of translation
-	echo data.  This will prevent building pidgin.desktop and the GConf schemas.
+	echo data.  This will prevent building amethyst.desktop and the GConf schemas.
 	echo Be sure you know what you are doing.
 fi
 echo

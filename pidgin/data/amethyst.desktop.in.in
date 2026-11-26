@@ -1,9 +1,9 @@
 [Desktop Entry]
-_Name=Pidgin Internet Messenger
+_Name=Amethyst Messenger
 _GenericName=Internet Messenger
-_Comment=Chat over IM.  Supports AIM, Google Talk, Jabber/XMPP, MSN, Yahoo and more
-Exec=pidgin
-Icon=pidgin
+_Comment=Chat over MSN, XMPP, IRC and other messaging networks
+Exec=amethyst
+Icon=amethyst
 StartupNotify=true
 Terminal=false
 Type=Application

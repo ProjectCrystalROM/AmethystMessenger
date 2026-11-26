@@ -3,8 +3,8 @@ EXTRA_DIST = \
 		getopt.h \
 		getopt1.c \
 		Makefile.mingw \
-		data/pidgin.appdata.xml.in \
-		data/pidgin.desktop.in \
+		data/amethyst.appdata.xml.in \
+		data/amethyst.desktop.in \
 		data/pidgin.pc.in \
 		data/pidgin-uninstalled.pc.in \
 		win32/MinimizeToTray.h \
@@ -35,9 +35,9 @@ if ENABLE_GTK
 
 SUBDIRS = pixmaps plugins
 
-bin_PROGRAMS = pidgin
+bin_PROGRAMS = amethyst
 
-pidgin_SOURCES = \
+amethyst_SOURCES = \
 	pidginstock.c \
 	gtkaccount.c \
 	gtkblist.c \
@@ -144,9 +144,9 @@ pidgininclude_HEADERS = \
 	$(pidgin_headers)
 
 
-pidgin_DEPENDENCIES = @LIBOBJS@
-pidgin_LDFLAGS = -export-dynamic
-pidgin_LDADD = \
+amethyst_DEPENDENCIES = @LIBOBJS@
+amethyst_LDFLAGS = -export-dynamic
+amethyst_LDADD = \
 	@LIBOBJS@ \
 	$(GLIB_LIBS) \
 	$(DBUS_LIBS) \
@@ -182,16 +182,16 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = data/pidgin.pc
 
 if INSTALL_I18N
-DESKTOP_FILE=data/pidgin.desktop
+DESKTOP_FILE=data/amethyst.desktop
 
 appsdir = $(datadir)/applications
-apps_in_files = data/pidgin.desktop.in
+apps_in_files = data/amethyst.desktop.in
 apps_DATA = $(apps_in_files:.desktop.in=.desktop)
 @INTLTOOL_DESKTOP_RULE@
 
 appdatadir = $(datarootdir)/appdata
 appdata_DATA = $(appdata_in_files:.xml.in=.xml)
-appdata_in_files = data/pidgin.appdata.xml.in
+appdata_in_files = data/amethyst.appdata.xml.in
 
 @INTLTOOL_XML_RULE@
 

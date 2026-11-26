@@ -12,13 +12,13 @@ DEFINES := $(subst -DWIN32_LEAN_AND_MEAN,,$(DEFINES))
 ##
 ## VARIABLE DEFINITIONS
 ##
-EXE_TARGET := pidgin
+EXE_TARGET := amethyst
 PIDGIN_TARGET := pidgin
 EXE_NAME := $(EXE_TARGET).exe
 
 WINAPP := -mwindows
 
-LDFLAGS := $(WINAPP) $(LD_HARDENING_OPTIONS) -Wl,--enable-auto-import -lssp
+LDFLAGS := $(WINAPP) -static-libgcc -Wl,--major-subsystem-version,5,--minor-subsystem-version,1 $(LD_HARDENING_OPTIONS) -Wl,--enable-auto-import -lssp
 
 ##
 ## INCLUDE PATHS
@@ -28,6 +28,7 @@ PURPLE_INCLUDE_PATHS =	\
 			-I$(PURPLE_TOP)/win32 \
 			-I$(PIDGIN_TREE_TOP) \
 			-I$(GTK_TOP)/include \
+			-I$(LIBXML2_TOP)/include/libxml2 \
 			-I$(GTK_TOP)/include/glib-2.0 \
 			-I$(GTK_TOP)/lib/glib-2.0/include
 
@@ -138,6 +139,8 @@ include $(PIDGIN_COMMON_RULES)
 all: $(EXE_TARGET).exe $(PIDGIN_TARGET).dll
 	$(MAKE) -C $(PIDGIN_PLUGINS_TOP) -f $(MINGW_MAKEFILE)
 
+win32/pidgin_exe_rc.o: pixmaps/pidgin.ico
+
 win32/pidgin_exe_rc.rc: win32/pidgin_exe_rc.rc.in $(PIDGIN_TREE_TOP)/VERSION
 	sed -e 's/@PIDGIN_VERSION@/$(PIDGIN_VERSION)/g' \
 	    -e 's/@ORIGINAL_FILENAME@/$(EXE_NAME)/' \
@@ -150,6 +153,8 @@ install: install_shallow all
 	$(MAKE) -C $(PIDGIN_PLUGINS_TOP) -f $(MINGW_MAKEFILE) install
 	$(MAKE) -C $(PIDGIN_PIXMAPS_TOP) -f $(MINGW_MAKEFILE) install
 
+win32/pidgin_dll_rc.o: pixmaps/tray/16/available_4bit.ico pixmaps/tray/16/away_4bit.ico pixmaps/tray/16/busy_4bit.ico pixmaps/tray/16/extended-away_4bit.ico pixmaps/tray/16/offline_4bit.ico pixmaps/tray/16/connecting_4bit.ico pixmaps/tray/16/message_4bit.ico pixmaps/tray/16/invisible_4bit.ico
+
 win32/pidgin_dll_rc.rc: win32/pidgin_dll_rc.rc.in $(PIDGIN_TREE_TOP)/VERSION
 	sed -e 's/@PIDGIN_VERSION@/$(PIDGIN_VERSION)/g' \
 	    $@.in > $@
@@ -157,7 +162,7 @@ win32/pidgin_dll_rc.rc: win32/pidgin_dll_rc.rc.in $(PIDGIN_TREE_TOP)/VERSION
 $(EXE_OBJECTS) $(PIDGIN_OBJECTS): $(PIDGIN_CONFIG_H)
 
 $(PIDGIN_TARGET).dll $(PIDGIN_TARGET).dll.a: $(PURPLE_DLL).a $(PIDGIN_OBJECTS)
-	$(CC) -shared $(PIDGIN_OBJECTS) $(LIB_PATHS) $(PIDGIN_LIBS) $(DLL_LD_FLAGS) -Wl,--output-def,$(PIDGIN_TARGET).def,--out-implib,$(PIDGIN_TARGET).dll.a -o $(PIDGIN_TARGET).dll
+	$(CC) -shared $(PIDGIN_OBJECTS) $(LIB_PATHS) $(PIDGIN_LIBS) $(DLL_LD_FLAGS) -static-libgcc -Wl,--major-subsystem-version,5,--minor-subsystem-version,1 -Wl,--output-def,$(PIDGIN_TARGET).def,--out-implib,$(PIDGIN_TARGET).dll.a -o $(PIDGIN_TARGET).dll
 
 $(EXE_TARGET).exe: $(PIDGIN_CONFIG_H) $(PIDGIN_DLL).a $(EXE_OBJECTS) $(PIDGIN_TARGET).dll
 	$(CC) $(EXE_OBJECTS) $(LDFLAGS) -o $(EXE_TARGET).exe

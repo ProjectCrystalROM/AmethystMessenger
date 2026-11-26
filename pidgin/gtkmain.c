@@ -253,11 +253,11 @@ ui_main(void)
 		const char *dir;
 		const char *filename;
 	} icon_sizes[] = {
-		{"16x16", "pidgin.png"},
-		{"24x24", "pidgin.png"},
-		{"32x32", "pidgin.png"},
-		{"48x48", "pidgin.png"},
-		{"scalable", "pidgin.svg"}
+		{"16x16", "amethyst.png"},
+		{"24x24", "amethyst.png"},
+		{"32x32", "amethyst.png"},
+		{"48x48", "amethyst.png"},
+		{"scalable", "amethyst.svg"}
 	};
 
 #endif
@@ -372,8 +372,8 @@ static GHashTable *pidgin_ui_get_info(void)
 
 		g_hash_table_insert(ui_info, "name", (char*)PIDGIN_NAME);
 		g_hash_table_insert(ui_info, "version", VERSION);
-		g_hash_table_insert(ui_info, "website", "http://pidgin.im");
-		g_hash_table_insert(ui_info, "dev_website", "http://developer.pidgin.im");
+		g_hash_table_insert(ui_info, "website", AMETHYST_PROJECT_URL);
+		g_hash_table_insert(ui_info, "dev_website", AMETHYST_PROJECT_URL "/issues");
 		g_hash_table_insert(ui_info, "client_type", "pc");
 
 		/*
@@ -497,7 +497,7 @@ int main(int argc, char *argv[])
 	int opt;
 	gboolean gui_check;
 	gboolean debug_enabled;
-	gboolean migration_failed = FALSE;
+
 	GList *active_accounts;
 
 	struct option long_options[] = {
@@ -529,7 +529,7 @@ int main(int argc, char *argv[])
 	g_thread_init(NULL);
 #endif
 
-	g_set_prgname("Pidgin");
+	g_set_prgname("amethyst");
 
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, LOCALEDIR);
@@ -552,12 +552,9 @@ int main(int argc, char *argv[])
 			"no fault of your own.\n\n"
 			"If you can reproduce the crash, please notify the developers\n"
 			"by reporting a bug at:\n"
-			"%ssimpleticket/\n\n"
-			"Please make sure to specify what you were doing at the time\n"
-			"and post the backtrace from the core file.  If you do not know\n"
-			"how to get the backtrace, please read the instructions at\n"
-			"%swiki/GetABacktrace\n"),
-			PIDGIN_NAME, DISPLAY_VERSION, PURPLE_DEVEL_WEBSITE, PURPLE_DEVEL_WEBSITE
+			"%s/issues\n\n"
+			"Include the steps to reproduce the crash and a backtrace if available.\n"),
+			PIDGIN_NAME, DISPLAY_VERSION, AMETHYST_PROJECT_URL
 		);
 
 		/* we have to convert the message (UTF-8 to console
@@ -721,27 +718,24 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	/* set a user-specified config directory */
 	if (opt_config_dir_arg != NULL) {
 		purple_util_set_user_dir(opt_config_dir_arg);
+	} else {
+#ifdef _WIN32
+		const char *portable_home = g_getenv("AMETHYST_PORTABLE_HOME");
+		char *appdata = wpurple_get_special_folder(CSIDL_APPDATA);
+		const char *base = portable_home ? portable_home : appdata;
+		search_path = g_build_filename(base ? base : g_get_home_dir(),
+		                               "Amethyst Messenger", NULL);
+		g_free(appdata);
+#else
+		search_path = g_build_filename(g_get_home_dir(), ".amethyst", NULL);
+#endif
+		purple_util_set_user_dir(search_path);
+		g_free(search_path);
 	}
-
-	/*
-	 * We're done piddling around with command line arguments.
-	 * Fire up this baby.
-	 */
 
 	purple_debug_set_enabled(debug_enabled);
-
-	/* If we're using a custom configuration directory, we
-	 * do NOT want to migrate, or weird things will happen. */
-	if (opt_config_dir_arg == NULL)
-	{
-		if (!purple_core_migrate())
-		{
-			migration_failed = TRUE;
-		}
-	}
 
 	search_path = g_build_filename(purple_user_dir(), "gtkrc-2.0", NULL);
 	gtk_rc_add_default_file(search_path);
@@ -767,37 +761,6 @@ int main(int argc, char *argv[])
 #ifdef _WIN32
 	winpidgin_init(hint);
 #endif
-
-	if (migration_failed)
-	{
-		char *old = g_strconcat(purple_home_dir(),
-		                        G_DIR_SEPARATOR_S ".gaim", NULL);
-		const char *text = _(
-			"%s encountered errors migrating your settings "
-			"from %s to %s. Please investigate and complete the "
-			"migration by hand. Please report this error at http://developer.pidgin.im");
-		GtkWidget *dialog;
-
-		dialog = gtk_message_dialog_new(NULL,
-		                                0,
-		                                GTK_MESSAGE_ERROR,
-		                                GTK_BUTTONS_CLOSE,
-		                                text, PIDGIN_NAME,
-		                                old, purple_user_dir());
-		g_free(old);
-
-		g_signal_connect_swapped(dialog, "response",
-		                         G_CALLBACK(gtk_main_quit), NULL);
-
-		gtk_widget_show_all(dialog);
-
-		gtk_main();
-
-#ifdef HAVE_SIGNAL_H
-		g_free(segfault_message);
-#endif
-		return 0;
-	}
 
 	purple_core_set_ui_ops(pidgin_core_get_ui_ops());
 	purple_eventloop_set_ui_ops(pidgin_eventloop_get_ui_ops());

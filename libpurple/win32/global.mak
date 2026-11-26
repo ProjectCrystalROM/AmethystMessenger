@@ -52,8 +52,8 @@ PURPLE_VERSION_H := $(PURPLE_TOP)/version.h
 PURPLE_DLL := $(PURPLE_TOP)/libpurple.dll
 PURPLE_PERL_DLL := $(PURPLE_PERL_TOP)/perl.dll
 PIDGIN_DLL := $(PIDGIN_TOP)/pidgin.dll
-PIDGIN_EXE := $(PIDGIN_TOP)/pidgin.exe
-PIDGIN_PORTABLE_EXE := $(PIDGIN_TOP)/pidgin-portable.exe
+PIDGIN_EXE := $(PIDGIN_TOP)/amethyst.exe
+PIDGIN_PORTABLE_EXE := $(PIDGIN_TOP)/amethyst-portable.exe
 
 GCCWARNINGS ?= -Waggregate-return -Wcast-align -Wdeclaration-after-statement -Werror-implicit-function-declaration -Wextra -Wno-sign-compare -Wno-unused-parameter -Winit-self -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wundef
 

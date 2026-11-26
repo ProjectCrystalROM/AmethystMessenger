@@ -179,8 +179,8 @@ libpurple/status.c
 libpurple/util.c
 libpurple/win32/libc_interface.c
 libpurple/xmlnode.c
-pidgin/data/pidgin.appdata.xml.in
-pidgin/data/pidgin.desktop.in
+pidgin/data/amethyst.appdata.xml.in
+pidgin/data/amethyst.desktop.in
 pidgin/gtkaccount.c
 pidgin/gtkblist-theme.c
 pidgin/gtkblist.c

@@ -332,7 +332,7 @@ debug_command_cb(PurpleConversation *conv,
 	char *tmp, *markup;
 
 	if (!g_ascii_strcasecmp(args[0], "version")) {
-		tmp = g_strdup_printf("Using Pidgin v%s with libpurple v%s.",
+		tmp = g_strdup_printf("Using %s v%s with libpurple v%s.", PIDGIN_NAME,
 				DISPLAY_VERSION, purple_core_get_version());
 	} else if (!g_ascii_strcasecmp(args[0], "plugins")) {
 		/* Show all the loaded plugins, including the protocol plugins and plugin loaders.

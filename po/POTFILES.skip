@@ -37,7 +37,7 @@ libpurple/plugins/perl/common/Util.c
 libpurple/plugins/perl/common/Whiteboard.c
 libpurple/plugins/perl/common/XMLNode.c
 libpurple/protocols/null/nullprpl.c
-pidgin/data/pidgin.desktop.in.in
+pidgin/data/amethyst.desktop.in.in
 pidgin/plugins/crazychat/cc_pidgin_plugin.c
 pidgin/plugins/perl/common/GtkAccount.c
 pidgin/plugins/perl/common/GtkBlist.c
@@ -103,7 +103,7 @@ sub/libpurple/plugins/perl/common/Util.c
 sub/libpurple/plugins/perl/common/Whiteboard.c
 sub/libpurple/plugins/perl/common/XMLNode.c
 sub/libpurple/protocols/null/nullprpl.c
-sub/pidgin/data/pidgin.desktop.in
+sub/pidgin/data/amethyst.desktop.in
 sub/pidgin/plugins/crazychat/cc_pidgin_plugin.c
 sub/pidgin/plugins/perl/common/GtkAccount.c
 sub/pidgin/plugins/perl/common/GtkBlist.c

@@ -232,7 +232,7 @@ save_writefile_cb(void *user_data, const char *filename)
 	}
 
 	tmp = gtk_imhtml_get_text(GTK_IMHTML(win->text), NULL, NULL);
-	fprintf(fp, "Pidgin Debug Log : %s\n", purple_date_format_full(NULL));
+	fprintf(fp, "%s Debug Log: %s\n", PIDGIN_NAME, purple_date_format_full(NULL));
 	fprintf(fp, "%s", tmp);
 	g_free(tmp);
 
