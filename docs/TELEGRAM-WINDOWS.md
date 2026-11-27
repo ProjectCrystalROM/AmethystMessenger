@@ -46,9 +46,10 @@ Pidgin contact group with each topic as a chat room beneath it. Joining a topic
 opens its own conversation. The plugin loads the latest 50 messages when that
 conversation is first opened, sends text to the selected topic, and uses
 topic-scoped read receipts. The Vista tester confirmed topic history fetch and text display;
-the history order is being adjusted so newest messages appear at the bottom. One-to-one
-conversations already use the existing history fetch when opened. Older topic-history paging
-and topic-specific file uploads are not implemented yet.
+the history order is being adjusted so newest messages appear at the bottom. This build enables
+the Pidgin conversation integration required for the plugin's normal one-to-one history fetch;
+that DM path still needs Vista confirmation. Older topic-history paging and topic-specific file
+uploads are not implemented yet.
 
 ## Build the plugin
 

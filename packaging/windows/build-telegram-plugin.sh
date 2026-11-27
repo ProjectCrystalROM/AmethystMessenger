@@ -16,16 +16,17 @@ cmake -S "$root/third_party/tdlib-purple" -B "$AMETHYST_TELEGRAM_BUILD_DIR" \
     -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=i686 \
     -DCMAKE_CXX_COMPILER="$AMETHYST_MINGW_CXX" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0600 -DWINVER=0x0600 -I$AMETHYST_OPENSSL_PREFIX/include -I$AMETHYST_TDLIB_SOURCE/tdutils -I$AMETHYST_TDLIB_BUILD/tdutils" \
+    -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0600 -DWINVER=0x0600 -DG_SOURCE_REMOVE=FALSE -DG_SOURCE_CONTINUE=TRUE -I$AMETHYST_OPENSSL_PREFIX/include -I$AMETHYST_TDLIB_SOURCE/tdutils -I$AMETHYST_TDLIB_BUILD/tdutils" \
     -DCMAKE_SHARED_LINKER_FLAGS='-static-libgcc -static-libstdc++ -Wl,--major-subsystem-version,6,--minor-subsystem-version,0' \
     -DTd_DIR="$AMETHYST_TDLIB_DIR" \
-    -DNoPkgConfig=True -DNoPidgin=True -DNoVoip=True -DNoLottie=True -DNoTranslations=True \
+    -DNoPkgConfig=True -DNoPidgin=False -DNoVoip=True -DNoLottie=True -DNoTranslations=True \
     -Dfmt_INCLUDE_DIRS="$AMETHYST_FMT_PREFIX/include" \
+    -DPidgin_INCLUDE_DIRS="$root/pidgin;$root/pidgin/win32;$AMETHYST_GTK_SDK/include/gtk-2.0;$AMETHYST_GTK_SDK/include/atk-1.0;$AMETHYST_GTK_SDK/include/cairo;$AMETHYST_GTK_SDK/include/pango-1.0;$AMETHYST_GTK_SDK/lib/gtk-2.0/include" \
     -Dfmt_LIBRARIES="$AMETHYST_FMT_PREFIX/lib/libfmt.a" \
-    -DPurple_INCLUDE_DIRS="$root/libpurple;$AMETHYST_GTK_SDK/include/glib-2.0;$AMETHYST_GLIB_SDK/lib/glib-2.0/include" \
-    -DPurple_LIBRARIES="$root/libpurple/libpurple.dll.a;$AMETHYST_GTK_SDK/lib/libglib-2.0.dll.a;$AMETHYST_GTK_SDK/lib/libgobject-2.0.dll.a;$AMETHYST_GTK_SDK/lib/libgthread-2.0.dll.a" \
-    -DGModule_LIBRARIES="$AMETHYST_GTK_SDK/lib/libgmodule-2.0.dll.a" \
-    -DGIO_LIBRARIES="$AMETHYST_GTK_SDK/lib/libgio-2.0.dll.a" \
+    -DPurple_INCLUDE_DIRS="$root/libpurple;$AMETHYST_GLIB_SDK/include/glib-2.0;$AMETHYST_GTK_SDK/include/glib-2.0;$AMETHYST_GLIB_SDK/lib/glib-2.0/include" \
+    -DPurple_LIBRARIES="$root/libpurple/libpurple.dll.a;$AMETHYST_GLIB_SDK/lib/libglib-2.0.dll.a;$AMETHYST_GLIB_SDK/lib/libgobject-2.0.dll.a;$AMETHYST_GLIB_SDK/lib/libgthread-2.0.dll.a" \
+    -DGModule_LIBRARIES="$AMETHYST_GLIB_SDK/lib/libgmodule-2.0.dll.a" \
+    -DGIO_LIBRARIES="$AMETHYST_GLIB_SDK/lib/libgio-2.0.dll.a" \
     -DZLIB_INCLUDE_DIR="$AMETHYST_ZLIB_PREFIX/include" \
     -DZLIB_LIBRARY="$AMETHYST_ZLIB_PREFIX/lib/libz.a" \
     -DAPI_ID="${AMETHYST_TELEGRAM_API_ID:-94575}" \

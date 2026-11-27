@@ -1415,7 +1415,12 @@ static bool insertThumbnailAt(GtkWidget *entry, GtkTextIter *where, const Pasted
 
     std::string mime  = guessMimeType(pasted.path);
     gchar      *type  = mime.empty() ? nullptr : g_content_type_from_mime_type(mime.c_str());
+#if GLIB_CHECK_VERSION(2, 34, 0)
     gchar      *icon  = type ? g_content_type_get_generic_icon_name(type) : nullptr;
+#else
+    // GIO before 2.34 has no generic icon-name helper; use the existing generic fallback below.
+    gchar      *icon  = nullptr;
+#endif
     GtkWidget  *image = p_gtk_image_new_from_icon_name(icon ? icon : "text-x-generic", GTK_ICON_SIZE_DND);
     g_free(icon);
     g_free(type);

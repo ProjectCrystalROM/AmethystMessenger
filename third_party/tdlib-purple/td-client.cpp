@@ -3264,6 +3264,16 @@ bool PurpleTdClient::hasUnreadReactions(PurpleBuddy *buddy)
 
 bool PurpleTdClient::fillConversation(PurpleConversation *conv)
 {
+    // Forum topic conversations have their own topic-scoped history request when joined. Do not
+    // fill them with the parent supergroup's ordinary chat history.
+    if (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_CHAT) {
+        PurpleConvChat *purpleChat = purple_conversation_get_chat_data(conv);
+        ChatId topicChatId;
+        int32_t topicId = 0;
+        if (purpleChat && m_data.getForumTopicByPurpleId(purple_conv_chat_get_id(purpleChat),
+                                                          topicChatId, topicId))
+            return true;
+    }
     // Not known yet, or a group chat's tab kept from before not joined again yet, just after login
     const td::td_api::chat *chat = findConversationChat(m_data, conv);
     if (!chat && m_chatListReady && (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_IM))
