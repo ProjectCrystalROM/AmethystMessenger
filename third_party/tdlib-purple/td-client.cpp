@@ -190,6 +190,8 @@ void PurpleTdClient::processUpdate(td::td_api::Object &update)
             removeTempFile(getChatId(*sendSucceeded.message_), sendSucceeded.old_message_id_);
             m_data.renameShownMessage(getChatId(*sendSucceeded.message_), getOldMessageId(sendSucceeded),
                                       getId(*sendSucceeded.message_));
+            m_data.renameLiveMessage(getChatId(*sendSucceeded.message_), getOldMessageId(sendSucceeded),
+                                     getId(*sendSucceeded.message_));
             renameMessageMarks(m_data.purpleAccount, getOldMessageId(sendSucceeded), getId(*sendSucceeded.message_));
             logSentMessage(m_data, getChatId(*sendSucceeded.message_), getOldMessageId(sendSucceeded),
                            getId(*sendSucceeded.message_));

@@ -569,6 +569,9 @@ public:
     void                       setChatDeleted(ChatId chatId, bool deleted);
     bool                       isChatDeleted(ChatId chatId) const;
     void                       renameShownMessage(ChatId chatId, MessageId oldId, MessageId newId);
+    // Live TDLib updates can repeat an outgoing message when its temporary ID becomes permanent.
+    bool                       markLiveMessage(ChatId chatId, MessageId messageId);
+    void                       renameLiveMessage(ChatId chatId, MessageId oldId, MessageId newId);
     // The id a message sent goes by once it is, where it went by another while being sent, as the
     // links in its showing do
     MessageId                  getSentMessageId(ChatId chatId, MessageId messageId) const;
@@ -687,6 +690,8 @@ private:
     std::map<ShownMessageKey, ShownMessage> m_shownMessages;
     std::set<ChatId>                        m_deletedChats;
     std::map<ShownMessageKey, MessageId>    m_sentMessageIds;
+    std::set<ShownMessageKey>               m_liveMessages;
+    std::deque<ShownMessageKey>             m_liveMessageOrder;
     std::deque<ShownMessageKey>             m_shownMessageOrder;
     std::vector<PendingEdit>                m_pendingEdits;
     std::map<ShownMessageKey, UnloggedSent> m_unloggedSent;

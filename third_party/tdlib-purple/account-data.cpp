@@ -1195,6 +1195,33 @@ void TdAccountData::renameShownMessage(ChatId chatId, MessageId oldId, MessageId
     }
 }
 
+bool TdAccountData::markLiveMessage(ChatId chatId, MessageId messageId)
+{
+    if (!messageId.valid())
+        return false;
+    ShownMessageKey key(chatId, messageId);
+    if (!m_liveMessages.insert(key).second)
+        return true;
+    m_liveMessageOrder.push_back(key);
+    while (m_liveMessageOrder.size() > 10000) {
+        m_liveMessages.erase(m_liveMessageOrder.front());
+        m_liveMessageOrder.pop_front();
+    }
+    return false;
+}
+
+void TdAccountData::renameLiveMessage(ChatId chatId, MessageId oldId, MessageId newId)
+{
+    ShownMessageKey oldKey(chatId, oldId);
+    auto it = m_liveMessages.find(oldKey);
+    if (it != m_liveMessages.end()) {
+        m_liveMessages.erase(it);
+        ShownMessageKey newKey(chatId, newId);
+        if (m_liveMessages.insert(newKey).second)
+            m_liveMessageOrder.push_back(newKey);
+    }
+}
+
 void TdAccountData::addUnloggedSent(ChatId chatId, MessageId messageId, UnloggedSent &&sent)
 {
     m_unloggedSent[ShownMessageKey(chatId, messageId)] = std::move(sent);
