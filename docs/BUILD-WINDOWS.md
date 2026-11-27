@@ -15,12 +15,13 @@ The build script expects these files in an input directory. Obtain the original 
 Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3, Python 3, `unzip`, and `tar`. The upstream generated Windows makefiles are retained. Build with:
 
 ```sh
+AMETHYST_TELEGRAM_DLL=/path/to/telegram-plugin-output/libtelegram-tdlib.dll \
 make -f Makefile.mingw installer_offline \
   AMETHYST_INPUTS=/path/to/verified-inputs \
   AMETHYST_OUTPUT="$PWD/output"
 ```
 
-The output is `amethyst-messenger-2.11.0-win32.exe`, with `SHA256SUMS`. `packaging/windows/build.sh` builds libpurple, the GTK UI, launcher, and msn-pecan plugin, then stages the unaffected official runtime. It omits the old launcher and native MSN plugin. It does not modify an existing installation or user profile.
+The output is `amethyst-messenger-2.11.0-win32.exe`, with `SHA256SUMS`. `packaging/windows/build.sh` builds libpurple, the GTK UI, launcher, and msn-pecan plugin, then stages the unaffected official runtime. Supply `AMETHYST_TELEGRAM_DLL` pointing to the DLL produced by `packaging/windows/build-telegram-plugin.sh`; see [Telegram on Windows](TELEGRAM-WINDOWS.md) for its dependency setup. The packaging step omits the old launcher and native MSN plugin. It does not modify an existing installation or user profile.
 
 The build regenerates the Windows `config.h` from the checked-in MinGW template with the release version substituted, then regenerates the MinGW `libpurple/version.h`. It embeds the 32-bit XP subsystem version and uses static MinGW GCC runtime linkage. Review all resulting PE imports with `objdump -p` or PE inspection tools, including the recursively bundled DLLs, whenever compiler or runtime inputs change. These settings alone do not prove XP compatibility.
 

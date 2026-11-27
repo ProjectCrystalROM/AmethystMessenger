@@ -5,6 +5,11 @@ if [[ $# != 2 ]]; then
     echo "Usage: $0 INPUT_DIRECTORY OUTPUT_DIRECTORY" >&2
     exit 2
 fi
+telegram_dll=${AMETHYST_TELEGRAM_DLL:-}
+if [[ -z "$telegram_dll" || ! -f "$telegram_dll" ]]; then
+    echo "Set AMETHYST_TELEGRAM_DLL to the built tdlib-purple DLL." >&2
+    exit 2
+fi
 root=$(cd "$(dirname "$0")/../.." && pwd)
 inputs=$(realpath "$1")
 output=$(realpath -m "$2")
@@ -51,7 +56,12 @@ install_pe pidgin/amethyst.exe amethyst.exe
 install_pe pidgin/pidgin.dll pidgin.dll
 install_pe libpurple/libpurple.dll libpurple.dll
 install_pe libpurple/protocols/msn/libmsn.dll plugins/libmsn.dll
+install_pe "$telegram_dll" plugins/libtelegram-tdlib.dll
 install_pe pidgin/plugins/win32/winprefs/winprefs.dll plugins/winprefs.dll
+mkdir -p "$payload/pixmaps/pidgin/protocols"/{16,22,48}
+install -m 644 third_party/tdlib-purple/data/telegram16.png "$payload/pixmaps/pidgin/protocols/16/telegram.png"
+install -m 644 third_party/tdlib-purple/data/telegram22.png "$payload/pixmaps/pidgin/protocols/22/telegram.png"
+install -m 644 third_party/tdlib-purple/data/telegram48.png "$payload/pixmaps/pidgin/protocols/48/telegram.png"
 make -C pidgin/pixmaps -f Makefile.mingw PIDGIN_INSTALL_DIR="$payload" install
 make -C share/ca-certs -f Makefile.mingw PIDGIN_INSTALL_DIR="$payload" install
 
@@ -61,6 +71,9 @@ cp COPYRIGHT "$payload/Licenses/Pidgin-Copyright.txt"
 cp libpurple/protocols/msn/{COPYING,AUTHORS,pidgin-copyright} "$payload/Licenses/"
 cp libpurple/protocols/msn/ext/libmspack/COPYING.LIB "$payload/Licenses/"
 cp docs/LICENSING.md "$payload/Licenses/"
+cp third_party/tdlib-purple/LICENSE "$payload/Licenses/tdlib-purple-GPL.txt"
+cp third_party/tdlib-purple/README.md "$payload/Licenses/tdlib-purple-README.md"
+cp third_party/licenses/* "$payload/Licenses/"
 touch "$payload/.amethyst-messenger"
 
 python3 - "$payload" > "$work/remove.nsh" <<'PY'

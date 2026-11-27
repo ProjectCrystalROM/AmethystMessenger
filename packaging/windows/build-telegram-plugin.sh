@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/../.." && pwd)
+required=(AMETHYST_MINGW_CXX AMETHYST_TDLIB_DIR AMETHYST_TDLIB_SOURCE AMETHYST_TDLIB_BUILD
+          AMETHYST_OPENSSL_PREFIX AMETHYST_FMT_PREFIX AMETHYST_ZLIB_PREFIX
+          AMETHYST_GTK_SDK AMETHYST_GLIB_SDK AMETHYST_TELEGRAM_BUILD_DIR AMETHYST_TELEGRAM_OUTPUT_DIR)
+for name in "${required[@]}"; do
+    if [[ -z "${!name:-}" ]]; then
+        echo "Set $name; see docs/TELEGRAM-WINDOWS.md." >&2
+        exit 2
+    fi
+done
+
+cmake -S "$root/third_party/tdlib-purple" -B "$AMETHYST_TELEGRAM_BUILD_DIR" \
+    -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=i686 \
+    -DCMAKE_CXX_COMPILER="$AMETHYST_MINGW_CXX" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0600 -DWINVER=0x0600 -I$AMETHYST_OPENSSL_PREFIX/include -I$AMETHYST_TDLIB_SOURCE/tdutils -I$AMETHYST_TDLIB_BUILD/tdutils" \
+    -DCMAKE_SHARED_LINKER_FLAGS='-static-libgcc -static-libstdc++ -Wl,--major-subsystem-version,6,--minor-subsystem-version,0' \
+    -DTd_DIR="$AMETHYST_TDLIB_DIR" \
+    -DNoPkgConfig=True -DNoPidgin=True -DNoVoip=True -DNoLottie=True -DNoTranslations=True \
+    -Dfmt_INCLUDE_DIRS="$AMETHYST_FMT_PREFIX/include" \
+    -Dfmt_LIBRARIES="$AMETHYST_FMT_PREFIX/lib/libfmt.a" \
+    -DPurple_INCLUDE_DIRS="$root/libpurple;$AMETHYST_GTK_SDK/include/glib-2.0;$AMETHYST_GLIB_SDK/lib/glib-2.0/include" \
+    -DPurple_LIBRARIES="$root/libpurple/libpurple.dll.a;$AMETHYST_GTK_SDK/lib/libglib-2.0.dll.a;$AMETHYST_GTK_SDK/lib/libgobject-2.0.dll.a;$AMETHYST_GTK_SDK/lib/libgthread-2.0.dll.a" \
+    -DGModule_LIBRARIES="$AMETHYST_GTK_SDK/lib/libgmodule-2.0.dll.a" \
+    -DGIO_LIBRARIES="$AMETHYST_GTK_SDK/lib/libgio-2.0.dll.a" \
+    -DZLIB_INCLUDE_DIR="$AMETHYST_ZLIB_PREFIX/include" \
+    -DZLIB_LIBRARY="$AMETHYST_ZLIB_PREFIX/lib/libz.a" \
+    -DAPI_ID="${AMETHYST_TELEGRAM_API_ID:-94575}" \
+    -DAPI_HASH="${AMETHYST_TELEGRAM_API_HASH:-a3406de8d171bb422bb6ddf3bbd800e2}"
+
+cmake --build "$AMETHYST_TELEGRAM_BUILD_DIR" --target telegram-tdlib --parallel "${JOBS:-4}"
+mkdir -p "$AMETHYST_TELEGRAM_OUTPUT_DIR"
+SOURCE_DATE_EPOCH=0 i686-w64-mingw32-strip --strip-unneeded \
+    -o "$AMETHYST_TELEGRAM_OUTPUT_DIR/libtelegram-tdlib.dll" \
+    "$AMETHYST_TELEGRAM_BUILD_DIR/libtelegram-tdlib.dll"

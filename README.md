@@ -6,7 +6,7 @@
 
 Amethyst Messenger is an independently maintained multiprotocol instant messaging client derived from Pidgin 2.11.0. The project preserves the classic desktop messaging experience on historical operating systems and restores access to networks left behind by their original operators.
 
-The initial release integrates msn-pecan as the MSN protocol implementation and configures it for CrossTalk. MSN appears as **MSN** in account setup. The project values historical compatibility, lightweight software, user choice, and preservation.
+The Windows build integrates msn-pecan as the MSN protocol implementation and configures it for CrossTalk. MSN appears as **MSN** in account setup. The Windows installer also includes the tdlib-purple Telegram plugin; its Vista minimum and login status are documented below. The project values historical compatibility, lightweight software, user choice, and preservation.
 
 Amethyst Messenger is independent and is not affiliated with the original Pidgin developers, Microsoft, the msn-pecan developers, or the CrossTalk operators. Its source preserves upstream copyright notices and licensing terms.
 
@@ -19,6 +19,8 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 | Windows XP Professional x64 SP2 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
 | Windows Vista SP2 x64 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
 | Wine | Used for packaging and startup smoke tests; this does not establish Windows compatibility. |
+
+The application and existing bundled protocols retain the XP SP3 x86 target. The Telegram plugin requires Windows Vista or later; it imports Vista APIs and will not load on XP.
 
 The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. Other bundled protocols remain available, subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
@@ -38,9 +40,13 @@ For Unix GTK2 builds, use the upstream Pidgin 2.11.0 Autotools build process. Th
 
 The integrated msn-pecan protocol is packaged as `plugins/libmsn.dll` with protocol ID `prpl-msn-pecan` and display name MSN. The retired native Pidgin MSN protocol DLL is excluded. CrossTalk supports historical MSN client behaviors; this project preserves the supplied msn-pecan implementation and its endpoint configuration. Contact synchronization, presence, switching conversations, and messaging should be verified with a live account and contacts. No stronger functionality claim is made from build or startup tests alone.
 
+## Telegram
+
+The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Wine startup testing confirms libpurple loads the plugin. Telegram authentication and messaging have not yet been tested. The upstream default Telegram API test credentials can be rate limited. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, feature limits, and the Vista requirement.
+
 ## Source, attribution, and contributions
 
-This source derives from the Pidgin 2.11.0 release and includes msn-pecan for CrossTalk connectivity. Retain the upstream notices. Amethyst Messenger is distributed under the GNU GPL as described by `COPYING`; see [licensing notes](docs/LICENSING.md) and the [third-party source list](docs/THIRD-PARTY-SOURCES.md) for bundled component details. Reproducible Windows build inputs and checksums are documented in [BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
+This source derives from the Pidgin 2.11.0 release and includes msn-pecan for CrossTalk connectivity and tdlib-purple for Telegram. Retain the upstream notices. Amethyst Messenger is distributed under the GNU GPL as described by `COPYING`; see [licensing notes](docs/LICENSING.md) and the [third-party source list](docs/THIRD-PARTY-SOURCES.md) for bundled component details. Reproducible Windows build inputs and checksums are documented in [BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md).
 
 Contributions should focus on preservation, tested compatibility, and small changes with clear user benefit. Include target OS, build command, and test evidence with compatibility changes. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

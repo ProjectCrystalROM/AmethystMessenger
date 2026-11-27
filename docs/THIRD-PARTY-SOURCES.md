@@ -2,6 +2,25 @@
 
 The Amethyst source repository contains the Pidgin 2.11.0 code and the integrated msn-pecan sources. The installer reuses the official Pidgin 2.11.0 Windows runtime for its GTK2 bundle, NSS backend, optional modules, and unchanged protocol plugins. The installer’s retained GPL notices are in `COPYING`, `COPYRIGHT`, and `Licenses/`.
 
+The repository also contains the GPL-2.0-or-later tdlib-purple source at
+`third_party/tdlib-purple/`, based on commit
+[`0fb0ae4634dd72a34f71d9fadfef5c148eed1637`](https://github.com/UnitedMarsupials/tdlib-purple/commit/0fb0ae4634dd72a34f71d9fadfef5c148eed1637).
+The installer carries its license and the licenses of the statically linked
+components. The tested build used TDLib commit
+[`e7ac61dd69409c31b3c8c7367b33b07eecce701f`](https://github.com/tdlib/td/commit/e7ac61dd69409c31b3c8c7367b33b07eecce701f),
+OpenSSL 3.0.0 commit
+[`89cd17a031e022211684eb7eb41190cf1910f9fa`](https://github.com/openssl/openssl/commit/89cd17a031e022211684eb7eb41190cf1910f9fa),
+fmt 10.2.1 commit
+[`e69e5f977d458f2650bb346dadf2ad30c5320281`](https://github.com/fmtlib/fmt/commit/e69e5f977d458f2650bb346dadf2ad30c5320281),
+and Debian MinGW zlib 1.3.1+dfsg-2. The exact zlib source package files are
+available from [Debian](https://packages.debian.org/source/stable/libz-mingw-w64).
+Their license texts are retained in `third_party/licenses/` and copied into the
+installer. The release's `amethyst-2.11.0-third-party-sources-telegram.tar.gz`
+adds exact TDLib, OpenSSL, fmt, zlib, and tdlib-purple sources to the earlier
+runtime source bundle. The archive includes SHA-256 checksums and the Windows
+compatibility patch. The source repository keeps the Amethyst patch/build
+scripts; see [TELEGRAM-WINDOWS.md](TELEGRAM-WINDOWS.md).
+
 ## GTK runtime bundle
 
 The exact upstream GTK runtime source package for bundle version 2.16.6.3 is available from the [Pidgin SourceForge archive](https://sourceforge.net/projects/pidgin/files/GTK%2B%20for%20Windows/2.16.6.3/gtk-runtime-2.16.6.3-src.zip/download). It includes source and build recipes for ATK 1.32.0-2, Cairo 1.8.10-1, Expat 2.1.0-1, Fontconfig 2.8.0-2, Freetype 2.4.10-1, gettext 0.18.1.1-2, GLib 2.28.8-1, GTK+ 2.16.6-2, libpng 1.4.12-1, Pango 1.29.4-1daa, and zlib 1.2.8_daa1. The authoritative versions, source URLs, source hashes, and local patches are listed in [`generate_gtk_zip.sh`](../pidgin/win32/nsis/generate_gtk_zip.sh).
