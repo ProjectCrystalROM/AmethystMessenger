@@ -42,7 +42,7 @@ std::vector<const td::td_api::user *> getUsersByPurpleName(const char *buddyName
                                                            const char *action, bool byDisplayName = false);
 PurpleConversation *getImConversation(PurpleAccount *account, const char *username);
 PurpleConvChat *    getChatConversation(TdAccountData &account, const td::td_api::chat &chat,
-                                        int chatPurpleId);
+                                        int chatPurpleId, int32_t topicId = 0);
 PurpleConvChat *    findChatConversation(PurpleAccount *account, const td::td_api::chat &chat);
 bool                conversationHasFocus(PurpleConversation *conv);
 
@@ -55,7 +55,8 @@ void                updateBasicGroupChat(TdAccountData &account, BasicGroupId gr
 void                updateSupergroupChat(TdAccountData &account, SupergroupId groupId);
 bool                isInviteLinkActive(const td::td_api::chatInviteLink &linkInfo);
 void                removeGroupChat(PurpleAccount *purpleAccount, const td::td_api::chat &chat);
-void                addTransientChat(TdAccountData &account, const td::td_api::chat &chat);
+void                addTransientChat(TdAccountData &account, const td::td_api::chat &chat,
+                                     int32_t topicId = 0, const std::string &topicName = std::string());
 void                wipeChatTraces(PurpleAccount *purpleAccount, ChatId chatId, const std::string &convName,
                                    PurpleConversationType type);
 void                removePrivateChat(TdAccountData &account, const td::td_api::chat &chat);
@@ -153,13 +154,14 @@ struct ParsedEdit {
 ParsedEdit parseEdit(const char *message, const TdAccountData &account);
 bool isSameFormattedText(const td::td_api::formattedText &a, const td::td_api::formattedText &b);
 int  transmitMessage(ChatId chatId, const char *message, TdTransceiver &transceiver,
-                     TdAccountData &account, TdTransceiver::ResponseCb response);
+                     TdAccountData &account, TdTransceiver::ResponseCb response, int32_t topicId = 0);
 
 void requestRecoveryEmailConfirmation(PurpleConnection *gc, const char *emailInfo);
 
 void updateOption(const td::td_api::updateOption &option, TdAccountData &account);
 void populateGroupChatList(PurpleRoomlist *roomlist, const std::vector<const td::td_api::chat *> &chats,
-                           const TdAccountData &account);
+                           TdAccountData &account,
+                           std::vector<std::pair<const td::td_api::chat *, PurpleRoomlistRoom *>> &forumChats);
 
 class AccountThread {
 public:

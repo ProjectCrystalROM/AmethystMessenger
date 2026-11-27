@@ -351,22 +351,31 @@ static PurpleGroup *getTransientGroup(const char *groupName)
     return group;
 }
 
-void addTransientChat(TdAccountData &account, const td::td_api::chat &chat)
+void addTransientChat(TdAccountData &account, const td::td_api::chat &chat, int32_t topicId,
+                     const std::string &topicName)
 {
     PurpleGroup *group = getTransientGroup(getTransientChatGroupName());
+    std::string title = topicId ? chat.title_ + " — " + topicName : chat.title_;
 
     purple_debug_misc(config::pluginId, "Adding chat %s to the buddy list until the program quits\n",
-                      chat.title_.c_str());
-    PurpleChat *purpleChat = purple_chat_new(account.purpleAccount, chat.title_.c_str(), getChatComponents(chat));
+                      title.c_str());
+    PurpleChat *purpleChat = purple_chat_new(account.purpleAccount, title.c_str(),
+                                             getChatComponents(chat, topicId));
     purple_blist_node_set_flags(PURPLE_BLIST_NODE(purpleChat), PURPLE_BLIST_NODE_FLAG_NO_SAVE);
     purple_blist_add_chat(purpleChat, group, NULL);
 }
 
 
 PurpleConvChat *getChatConversation(TdAccountData &account, const td::td_api::chat &chat,
-                                    int chatPurpleId)
+                                    int chatPurpleId, int32_t topicId)
 {
-    std::string chatName       = getPurpleChatName(chat);
+    std::string chatName       = topicId ? getPurpleForumTopicName(getId(chat), topicId)
+                                        : getPurpleChatName(chat);
+    std::string topicName;
+    if (topicId)
+        topicName = account.getForumTopicName(getId(chat), topicId);
+    if (topicId && topicName.empty())
+        topicName = formatMessage(_("Topic {}"), std::to_string(topicId));
     bool        newChatCreated = false;
 
     // If account logged off with chats open, these chats will be purple_conv_chat_left()'d but not
@@ -386,7 +395,7 @@ PurpleConvChat *getChatConversation(TdAccountData &account, const td::td_api::ch
                               chat.title_.c_str(), chatPurpleId);
             bool transient = !purple_blist_find_chat(account.purpleAccount, chatName.c_str());
             if (transient)
-                addTransientChat(account, chat);
+                addTransientChat(account, chat, topicId, topicName);
             serv_got_joined_chat(purple_account_get_connection(account.purpleAccount), chatPurpleId, chatName.c_str());
             conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT, chatName.c_str(),
                                                          account.purpleAccount);
@@ -397,7 +406,8 @@ PurpleConvChat *getChatConversation(TdAccountData &account, const td::td_api::ch
                 // only look at when it next updates the tab
                 if (transient) {
                     purple_debug_misc(config::pluginId, "Setting conversation title to '%s'\n", chat.title_.c_str());
-                    purple_conversation_set_title(conv, chat.title_.c_str());
+                    std::string title = topicId ? chat.title_ + " — " + topicName : chat.title_;
+                    purple_conversation_set_title(conv, title.c_str());
                 }
                 newChatCreated = true;
             }
@@ -1702,7 +1712,7 @@ static size_t getAlbumSize(const std::vector<MessagePart> &parts, size_t first)
 }
 
 int transmitMessage(ChatId chatId, const char *message, TdTransceiver &transceiver,
-                    TdAccountData &account, TdTransceiver::ResponseCb response)
+                    TdAccountData &account, TdTransceiver::ResponseCb response, int32_t topicId)
 {
     std::vector<MessagePart> parts;
     parseMessage(message, parts, account);
@@ -1734,11 +1744,15 @@ int transmitMessage(ChatId chatId, const char *message, TdTransceiver &transceiv
             if (albumSize == 1) {
                 auto sendMessageRequest = td::td_api::make_object<td::td_api::sendMessage>();
                 sendMessageRequest->chat_id_ = chatId.value();
+                if (topicId > 0)
+                    sendMessageRequest->topic_id_ = td::td_api::make_object<td::td_api::messageTopicForum>(topicId);
                 sendMessageRequest->input_message_content_ = makeAttachment(input);
                 requestId = transceiver.sendQuery(std::move(sendMessageRequest), response);
             } else {
                 auto sendAlbumRequest = td::td_api::make_object<td::td_api::sendMessageAlbum>();
                 sendAlbumRequest->chat_id_ = chatId.value();
+                if (topicId > 0)
+                    sendAlbumRequest->topic_id_ = td::td_api::make_object<td::td_api::messageTopicForum>(topicId);
                 for (size_t j = i; j < i + albumSize; j++)
                     sendAlbumRequest->input_message_contents_.push_back(makeAttachment(parts[j]));
                 requestId = transceiver.sendQuery(std::move(sendAlbumRequest), response);
@@ -1750,6 +1764,8 @@ int transmitMessage(ChatId chatId, const char *message, TdTransceiver &transceiv
 
         td::td_api::object_ptr<td::td_api::sendMessage> sendMessageRequest = td::td_api::make_object<td::td_api::sendMessage>();
         sendMessageRequest->chat_id_ = chatId.value();
+        if (topicId > 0)
+            sendMessageRequest->topic_id_ = td::td_api::make_object<td::td_api::messageTopicForum>(topicId);
         char *tempFileName = NULL;
         bool  hasImage     = false;
 
@@ -2138,28 +2154,37 @@ void updateOption(const td::td_api::updateOption &option, TdAccountData &account
 }
 
 void populateGroupChatList(PurpleRoomlist *roomlist, const std::vector<const td::td_api::chat *> &chats,
-                           const TdAccountData &account)
+                           TdAccountData &account,
+                           std::vector<std::pair<const td::td_api::chat *, PurpleRoomlistRoom *>> &forumChats)
 {
     for (const td::td_api::chat *chat: chats)
         if (account.isGroupChatWithMembership(*chat)) {
-            PurpleRoomlistRoom *room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM,
-                                                                chat->title_.c_str(), NULL);
-            purple_roomlist_room_add_field (roomlist, room, getPurpleChatName(*chat).c_str());
             BasicGroupId groupId = getBasicGroupId(*chat);
+            SupergroupId supergroupId = getSupergroupId(*chat);
+            const td::td_api::supergroup *supergroup = supergroupId.valid() ? account.getSupergroup(supergroupId) : nullptr;
+            bool forum = supergroup && supergroup->is_forum_ && !supergroup->is_channel_ &&
+                         !supergroup->is_broadcast_group_ &&
+                         !supergroup->is_direct_messages_group_ && chat->type_ &&
+                         (chat->type_->get_id() == td::td_api::chatTypeSupergroup::ID) &&
+                         !static_cast<const td::td_api::chatTypeSupergroup &>(*chat->type_).is_channel_;
+            PurpleRoomlistRoom *room = purple_roomlist_room_new(
+                forum ? PURPLE_ROOMLIST_ROOMTYPE_CATEGORY : PURPLE_ROOMLIST_ROOMTYPE_ROOM,
+                chat->title_.c_str(), NULL);
+            purple_roomlist_room_add_field(roomlist, room, getPurpleChatName(*chat).c_str());
             if (groupId.valid()) {
                 const td::td_api::basicGroupFullInfo *fullInfo = account.getBasicGroupInfo(groupId);
                 if (fullInfo && !fullInfo->description_.empty())
                     purple_roomlist_room_add_field(roomlist, room, fullInfo->description_.c_str());
             }
-            SupergroupId supergroupId = getSupergroupId(*chat);
             if (supergroupId.valid()) {
                 const td::td_api::supergroupFullInfo *fullInfo = account.getSupergroupInfo(supergroupId);
                 if (fullInfo && !fullInfo->description_.empty())
                     purple_roomlist_room_add_field(roomlist, room, fullInfo->description_.c_str());
             }
             purple_roomlist_room_add(roomlist, room);
+            if (forum)
+                forumChats.emplace_back(chat, room);
         }
-    purple_roomlist_set_in_progress(roomlist, FALSE);
 }
 
 AccountThread::AccountThread(PurpleAccount* purpleAccount)

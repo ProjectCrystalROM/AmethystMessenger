@@ -20,7 +20,9 @@ class PurpleTdClient;
 const char  *getChatNameComponent();
 GList       *getChatJoinInfo();
 std::string  getPurpleChatName(const td::td_api::chat &chat);
-GHashTable  *getChatComponents(const td::td_api::chat &chat);
+std::string  getPurpleForumTopicName(ChatId chatId, int32_t topicId);
+int32_t      getPurpleForumTopicId(const char *chatName);
+GHashTable  *getChatComponents(const td::td_api::chat &chat, int32_t topicId = 0);
 // Those only for joining or creating a group, empty: Pidgin's tooltip of a chat lists those a chat
 // has not, escaping their value, which is no string, with a warning
 void         completeChatComponents(PurpleChat *chat);

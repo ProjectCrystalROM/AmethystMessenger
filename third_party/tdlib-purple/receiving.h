@@ -22,7 +22,8 @@ unsigned getMessageWaitSeconds(const TgMessageInfo &message);
 // Whether an animated sticker is to be converted into a picture the front-end can show
 bool canConvertAnimatedSticker(PurpleAccount *purpleAccount);
 // The conversation a message in the chat goes to; made, if there is none yet
-PurpleConversation *getMessageConversation(TdAccountData &account, const td::td_api::chat &chat);
+PurpleConversation *getMessageConversation(TdAccountData &account, const td::td_api::chat &chat,
+                                          int32_t topicId = 0);
 // For the conversation window, which renders text as HTML
 std::string escapeForDisplay(const std::string &text);
 // A file:// URI for the path
@@ -89,7 +90,8 @@ void stickerConverted(TdAccountData &account, int32_t fileId, int imageId);
 // Logs those still awaiting their pictures as they were shown, as the account goes
 void logMessagesAwaitingPictures(TdAccountData &account);
 // The chat's conversation, if it is open; none is opened
-PurpleConversation *findMessageConversation(TdAccountData &account, const td::td_api::chat &chat);
+PurpleConversation *findMessageConversation(TdAccountData &account, const td::td_api::chat &chat,
+                                            int32_t topicId = 0);
 // Names a message by when it was sent, as the conversation window shows it
 std::string formatMessageTime(time_t timestamp);
 // Of a picture shown in the conversation, the size that does for it, of those within the limit on

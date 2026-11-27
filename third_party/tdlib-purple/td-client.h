@@ -99,6 +99,8 @@ public:
     void addUserToChat(int purpleChatId, const char *name);
     void showInviteLink(const std::string &purpleChatName);
     void getGroupChatList(PurpleRoomlist *roomlist);
+    void populateGroupChatList(PurpleRoomlist *roomlist);
+    bool joinForumTopic(ChatId chatId, int32_t topicId);
 
     void setTwoFactorAuth(const char *oldPassword, const char *newPassword, const char *hint,
                         const char *email);

@@ -3,6 +3,9 @@
 #include "format.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
 
 static char chatNameComponent[] = "id";
 static char joinStringKey[]     = "link";
@@ -58,14 +61,29 @@ std::string getPurpleChatName(const td::td_api::chat &chat)
     return "chat" + std::to_string(chat.id_);
 }
 
-GHashTable *getChatComponents(const td::td_api::chat &chat)
+std::string getPurpleForumTopicName(ChatId chatId, int32_t topicId)
 {
-    char name[32];
-    snprintf(name, sizeof(name)-1, "chat%" G_GINT64_FORMAT "", chat.id_);
-    name[sizeof(name)-1] = '\0';
+    return "chat" + std::to_string(chatId.value()) + ".topic" + std::to_string(topicId);
+}
+
+int32_t getPurpleForumTopicId(const char *chatName)
+{
+    if (!chatName)
+        return 0;
+    const char *topic = strstr(chatName, ".topic");
+    if (!topic || (topic == chatName) || (topic[6] == '\0'))
+        return 0;
+    char *end = nullptr;
+    long id = strtol(topic + 6, &end, 10);
+    return (end && (*end == '\0') && (id > 0) && (id <= INT32_MAX)) ? static_cast<int32_t>(id) : 0;
+}
+
+GHashTable *getChatComponents(const td::td_api::chat &chat, int32_t topicId)
+{
+    std::string name = topicId ? getPurpleForumTopicName(getId(chat), topicId) : getPurpleChatName(chat);
 
     GHashTable *table = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
-    g_hash_table_insert(table, chatNameComponent, g_strdup(name));
+    g_hash_table_insert(table, chatNameComponent, g_strdup(name.c_str()));
     // The keys are not freed with this table
     for (char *key: {joinStringKey, nameKey, typeKey})
         g_hash_table_insert(table, key, g_strdup(""));
@@ -120,8 +138,11 @@ int getChatGroupType(GHashTable *components)
 
 ChatId getTdlibChatId(const char *chatName)
 {
-    if (chatName && !strncmp(chatName, "chat", 4))
-        return ChatId::fromString(chatName+4);
+    if (chatName && !strncmp(chatName, "chat", 4)) {
+        const char *end = strstr(chatName + 4, ".topic");
+        std::string id(chatName + 4, end ? static_cast<size_t>(end - (chatName + 4)) : strlen(chatName + 4));
+        return ChatId::fromString(id.c_str());
+    }
 
     return ChatId::invalid;
 }

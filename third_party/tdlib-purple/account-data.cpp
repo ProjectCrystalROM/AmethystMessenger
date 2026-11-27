@@ -567,6 +567,44 @@ int TdAccountData::getPurpleChatId(ChatId tdChatId)
         return pChatInfo->second.purpleId;
 }
 
+int TdAccountData::getPurpleForumTopicId(ChatId chatId, int32_t topicId)
+{
+    ForumTopicKey key(chatId, topicId);
+    auto it = m_forumTopicPurpleIds.find(key);
+    if (it != m_forumTopicPurpleIds.end())
+        return it->second;
+    int32_t purpleId = ++m_lastChatPurpleId;
+    m_forumTopicPurpleIds[key] = purpleId;
+    m_purpleForumTopics[purpleId] = key;
+    return purpleId;
+}
+
+bool TdAccountData::getForumTopicByPurpleId(int32_t purpleChatId, ChatId &chatId, int32_t &topicId) const
+{
+    auto it = m_purpleForumTopics.find(purpleChatId);
+    if (it == m_purpleForumTopics.end())
+        return false;
+    chatId = it->second.first;
+    topicId = it->second.second;
+    return true;
+}
+
+void TdAccountData::setForumTopicName(ChatId chatId, int32_t topicId, const std::string &name)
+{
+    m_forumTopicNames[ForumTopicKey(chatId, topicId)] = name;
+}
+
+std::string TdAccountData::getForumTopicName(ChatId chatId, int32_t topicId) const
+{
+    auto it = m_forumTopicNames.find(ForumTopicKey(chatId, topicId));
+    return (it != m_forumTopicNames.end()) ? it->second : std::string();
+}
+
+bool TdAccountData::markForumTopicHistoryRequested(ChatId chatId, int32_t topicId)
+{
+    return m_forumTopicHistoryRequested.insert(ForumTopicKey(chatId, topicId)).second;
+}
+
 const td::td_api::chat *TdAccountData::getChatByPurpleId(int32_t purpleChatId) const
 {
     auto pChatInfo = std::find_if(m_chatInfo.begin(), m_chatInfo.end(),
@@ -1110,25 +1148,28 @@ void TdAccountData::removeActiveCall()
     m_callId = 0;
 }
 
-void TdAccountData::addPendingReadReceipt(ChatId chatId, MessageId messageId)
+void TdAccountData::addPendingReadReceipt(ChatId chatId, MessageId messageId, int32_t topicId)
 {
     auto pChatReceipts = std::find_if(m_pendingReadReceipts.begin(), m_pendingReadReceipts.end(),
-                                      [chatId](const std::vector<ReadReceipt> &receipts) {
-                                          return (!receipts.empty() && (receipts[0].chatId == chatId));
+                                      [chatId, topicId](const std::vector<ReadReceipt> &receipts) {
+                                          return (!receipts.empty() && (receipts[0].chatId == chatId) &&
+                                                  (receipts[0].topicId == topicId));
                                       });
     if (pChatReceipts != m_pendingReadReceipts.end())
-        pChatReceipts->push_back(ReadReceipt{chatId, messageId});
+        pChatReceipts->push_back(ReadReceipt{chatId, messageId, topicId});
     else {
         m_pendingReadReceipts.emplace_back();
-        m_pendingReadReceipts.back().push_back(ReadReceipt{chatId, messageId});
+        m_pendingReadReceipts.back().push_back(ReadReceipt{chatId, messageId, topicId});
     }
 }
 
-void TdAccountData::extractPendingReadReceipts(ChatId chatId, std::vector<ReadReceipt>& receipts)
+void TdAccountData::extractPendingReadReceipts(ChatId chatId, int32_t topicId,
+                                               std::vector<ReadReceipt>& receipts)
 {
     auto pChatReceipts = std::find_if(m_pendingReadReceipts.begin(), m_pendingReadReceipts.end(),
-                                      [chatId](const std::vector<ReadReceipt> &receipts) {
-                                          return (!receipts.empty() && (receipts[0].chatId == chatId));
+                                      [chatId, topicId](const std::vector<ReadReceipt> &receipts) {
+                                          return (!receipts.empty() && (receipts[0].chatId == chatId) &&
+                                                  (receipts[0].topicId == topicId));
                                       });
     if (pChatReceipts != m_pendingReadReceipts.end()) {
         receipts = std::move(*pChatReceipts);

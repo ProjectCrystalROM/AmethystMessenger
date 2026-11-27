@@ -804,7 +804,12 @@ static void tgprpl_chat_join (PurpleConnection *gc, GHashTable *data)
     const char     *name       = getChatName(data);
     const char     *joinString = getChatJoinString(data);
 
-    if (name && *name) {
+    int32_t topicId = getPurpleForumTopicId(name);
+    ChatId topicChatId = getTdlibChatId(name);
+    if (topicId && topicChatId.valid()) {
+        if (!tdClient->joinForumTopic(topicChatId, topicId))
+            purple_serv_got_join_chat_failed(gc, data);
+    } else if (name && *name) {
         if (!tdClient->joinChat(name))
             purple_serv_got_join_chat_failed (gc, data);
     } else if (joinString && *joinString) {

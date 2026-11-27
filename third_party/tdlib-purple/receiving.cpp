@@ -559,13 +559,15 @@ void sendConversationReadReceipts(TdAccountData &account, PurpleConversation *co
     if (!conversationHasFocus(conv))
         return;
     ChatId chatId;
-    if (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_CHAT)
+    int32_t topicId = 0;
+    if (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_CHAT) {
         chatId = getTdlibChatId(purple_conversation_get_name(conv));
-    else if (const td::td_api::chat *tdlibChat = findConversationChat(account, conv))
+        topicId = getPurpleForumTopicId(purple_conversation_get_name(conv));
+    } else if (const td::td_api::chat *tdlibChat = findConversationChat(account, conv))
         chatId = getId(*tdlibChat);
 
     std::vector<ReadReceipt> receipts;
-    account.extractPendingReadReceipts(chatId, receipts);
+    account.extractPendingReadReceipts(chatId, topicId, receipts);
     // Read as they are seen on screen, rather than all at once
     if (viewsMessages(conv))
         receipts.clear();
@@ -587,6 +589,8 @@ void sendConversationReadReceipts(TdAccountData &account, PurpleConversation *co
                           receipts.size(), chatId.value());
         td::td_api::object_ptr<td::td_api::viewMessages> viewMessagesReq = td::td_api::make_object<td::td_api::viewMessages>();
         viewMessagesReq->chat_id_ = chatId.value();
+        if (topicId > 0)
+            viewMessagesReq->source_ = td::td_api::make_object<td::td_api::messageSourceForumTopicHistory>();
         viewMessagesReq->force_read_ = true; // no idea what "closed chats" are at this point
         viewMessagesReq->message_ids_.resize(receipts.size());
         for (size_t i = 0; i < receipts.size(); i++)
@@ -634,8 +638,10 @@ static void showMessageTextChat(TdAccountData &account, const td::td_api::chat &
                                 const char *notification, PurpleMessageFlags flags)
 {
     // Again, doing what facebook plugin does
-    int purpleId = account.getPurpleChatId(getId(chat));
-    PurpleConvChat *conv = getChatConversation(account, chat, purpleId);
+    int32_t topicId = message.topicId;
+    int purpleId = topicId > 0 ? account.getPurpleForumTopicId(getId(chat), topicId)
+                              : account.getPurpleChatId(getId(chat));
+    PurpleConvChat *conv = getChatConversation(account, chat, purpleId, topicId);
 
     if (text) {
         if (flags & PURPLE_MESSAGE_SEND) {
@@ -799,7 +805,7 @@ static std::string getPrivateChatPurpleName(TdAccountData &account, const td::td
 }
 
 // The chat's conversation, if it is open; none is opened
-PurpleConversation *findMessageConversation(TdAccountData &account, const td::td_api::chat &chat)
+PurpleConversation *findMessageConversation(TdAccountData &account, const td::td_api::chat &chat, int32_t topicId)
 {
     const td::td_api::user *privateUser = account.getUserByPrivateChat(chat);
     if (privateUser)
@@ -809,11 +815,17 @@ PurpleConversation *findMessageConversation(TdAccountData &account, const td::td
     if (secretChatId.valid())
         return purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM, getSecretChatBuddyName(secretChatId).c_str(),
                                                      account.purpleAccount);
-    PurpleConvChat *conv = findChatConversation(account.purpleAccount, chat);
+    PurpleConvChat *conv = nullptr;
+    if (topicId > 0) {
+        PurpleConversation *topic = purple_find_conversation_with_account(
+            PURPLE_CONV_TYPE_CHAT, getPurpleForumTopicName(getId(chat), topicId).c_str(), account.purpleAccount);
+        conv = topic ? purple_conversation_get_chat_data(topic) : nullptr;
+    } else
+        conv = findChatConversation(account.purpleAccount, chat);
     return conv ? purple_conv_chat_get_conversation(conv) : NULL;
 }
 
-PurpleConversation *getMessageConversation(TdAccountData &account, const td::td_api::chat &chat)
+PurpleConversation *getMessageConversation(TdAccountData &account, const td::td_api::chat &chat, int32_t topicId)
 {
     const td::td_api::user *privateUser = account.getUserByPrivateChat(chat);
     if (privateUser)
@@ -824,7 +836,9 @@ PurpleConversation *getMessageConversation(TdAccountData &account, const td::td_
         return getImConversation(account.purpleAccount, getSecretChatBuddyName(secretChatId).c_str());
 
     if (getBasicGroupId(chat).valid() || getSupergroupId(chat).valid()) {
-        PurpleConvChat *conv = getChatConversation(account, chat, account.getPurpleChatId(getId(chat)));
+        int purpleId = topicId > 0 ? account.getPurpleForumTopicId(getId(chat), topicId)
+                                   : account.getPurpleChatId(getId(chat));
+        PurpleConvChat *conv = getChatConversation(account, chat, purpleId, topicId);
         return conv ? purple_conv_chat_get_conversation(conv) : NULL;
     }
     return NULL;
@@ -2178,7 +2192,8 @@ void showMessage(const td::td_api::chat &chat, IncomingMessage &fullMessage,
     if (!fullMessage.message) return;
     td::td_api::message &message = *fullMessage.message;
     if (!fullMessage.loggedHtml.empty()) {
-        appendTabLine(findMessageConversation(account, chat), fullMessage.loggedHtml, fullMessage.loggedId);
+        appendTabLine(findMessageConversation(account, chat, fullMessage.messageInfo.topicId),
+                      fullMessage.loggedHtml, fullMessage.loggedId);
         for (int id: fullMessage.loggedImageIds)
             purple_imgstore_unref_by_id(id);
         return;
@@ -2193,7 +2208,7 @@ void showMessage(const td::td_api::chat &chat, IncomingMessage &fullMessage,
     }
     // Past the end of what its tab shows, if it stops short of the newest: not shown again, nor yet
     // as it comes, though logged and told of
-    PurpleConversation *conv   = findMessageConversation(account, chat);
+    PurpleConversation *conv   = findMessageConversation(account, chat, fullMessage.messageInfo.topicId);
     MessageId           tabEnd = conv ? getTabEnd(conv) : MessageId();
     if (tabEnd.valid() && (message.id_ > tabEnd.value())) {
         if (fullMessage.messageInfo.redrawn) {
@@ -2623,6 +2638,10 @@ void makeFullMessage(const td::td_api::chat &chat, td::td_api::object_ptr<td::td
 
     TgMessageInfo &messageInfo = fullMessage.messageInfo;
     messageInfo.id               = getId(*message);
+    messageInfo.topicId          = message->topic_id_ &&
+                                   (message->topic_id_->get_id() == td::td_api::messageTopicForum::ID)
+                                   ? static_cast<const td::td_api::messageTopicForum &>(*message->topic_id_).forum_topic_id_
+                                   : 0;
     messageInfo.type             = TgMessageInfo::Type::Other;
     messageInfo.incomingGroupchatSender = getIncomingGroupchatSenderPurpleName(chat, *message, account);
     UserId senderId = getSenderUserId(*message);
@@ -3382,8 +3401,12 @@ void handleIncomingMessage(TdAccountData &account, const td::td_api::chat &chat,
         return;
     }
 
+    int32_t topicId = message->topic_id_ &&
+                      (message->topic_id_->get_id() == td::td_api::messageTopicForum::ID)
+                      ? static_cast<const td::td_api::messageTopicForum &>(*message->topic_id_).forum_topic_id_
+                      : 0;
     if (isReadReceiptsEnabled(account.purpleAccount))
-        account.addPendingReadReceipt(chatId, getId(*message));
+        account.addPendingReadReceipt(chatId, getId(*message), topicId);
 
     if (message->content_) {
         ShownMessage shownMessage;

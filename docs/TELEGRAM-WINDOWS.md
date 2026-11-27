@@ -12,8 +12,9 @@ target. The Telegram DLL is built for Vista (PE subsystem 6.0) and imports
 Vista-era APIs including `GetTickCount64`, SRW locks, and condition variables.
 Consequently Telegram is available on Vista SP2 and later, while the XP-targeted
 application and its other plugins remain usable on XP. The DLL does not load on
-XP. This is based on static PE inspection; no Vista Telegram login has been
-verified yet.
+XP. PE compatibility is based on static inspection. Telegram login, buddy
+addition, and text messaging have been verified on the Vista SP2 test machine;
+forum topic behavior has not yet been tested on Vista.
 
 The plugin loads in the Linux-hosted Wine smoke test and is initialized by
 libpurple. That verifies plugin packaging and ABI loading only, not Telegram
@@ -34,8 +35,16 @@ compiled into the plugin and must not be committed if private.
 
 The upstream build disables voice calls, animated sticker conversion,
 translations, and Pidgin-window-only enhancements to keep the Windows plugin
-small and compatible with GTK 2.14.7/GLib 2.28.8. Core messaging is available;
-feature coverage still needs interactive testing.
+small and compatible with GTK 2.14.7/GLib 2.28.8. Forum topic support is newly
+implemented in Amethyst and still needs interactive testing.
+
+## Forum topics
+
+Forum supergroups appear in the room list as categories, with each visible
+topic listed as a child room. Joining a topic opens its own conversation. The
+plugin loads the latest 50 messages when that conversation is first opened,
+sends text to the selected topic, and uses topic-scoped read receipts. Older
+history paging and topic-specific file uploads are not implemented yet.
 
 ## Build the plugin
 

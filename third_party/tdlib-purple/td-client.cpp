@@ -14,7 +14,9 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <algorithm>
+#include <functional>
 #include <set>
+#include <tuple>
 
 enum {
     // Typing notifications seems to be resent every 5-6 seconds, so 10s timeout hould be appropriate
@@ -1470,7 +1472,7 @@ void PurpleTdClient::onChatListReady()
     }
 
     for (PurpleRoomlist *roomlist: m_pendingRoomLists) {
-        populateGroupChatList(roomlist, chats, m_data);
+        populateGroupChatList(roomlist);
         purple_roomlist_unref(roomlist);
     }
     m_pendingRoomLists.clear();
@@ -4179,9 +4181,67 @@ bool PurpleTdClient::joinChat(const char *chatName, bool lookUp)
     return conv ? true : false;
 }
 
+bool PurpleTdClient::joinForumTopic(ChatId chatId, int32_t topicId)
+{
+    const td::td_api::chat *chat = m_data.getChat(chatId);
+    SupergroupId groupId = chat ? getSupergroupId(*chat) : SupergroupId::invalid;
+    const td::td_api::supergroup *group = groupId.valid() ? m_data.getSupergroup(groupId) : nullptr;
+    if (!chat || !group || !group->is_forum_ || group->is_channel_ || group->is_broadcast_group_ ||
+        group->is_direct_messages_group_ ||
+        topicId <= 0) {
+        purple_debug_warning(config::pluginId, "Cannot open forum topic %d in chat %" G_GINT64_FORMAT "\n",
+                             topicId, chatId.value());
+        return false;
+    }
+    int32_t purpleId = m_data.getPurpleForumTopicId(chatId, topicId);
+    PurpleConvChat *conv = getChatConversation(m_data, *chat, purpleId, topicId);
+    if (conv) {
+        purple_conversation_present(purple_conv_chat_get_conversation(conv));
+        if (m_data.markForumTopicHistoryRequested(chatId, topicId)) {
+            auto request = td::td_api::make_object<td::td_api::getForumTopicHistory>();
+            request->chat_id_ = chatId.value();
+            request->forum_topic_id_ = topicId;
+            request->from_message_id_ = 0;
+            request->offset_ = 0;
+            request->limit_ = 50;
+            m_transceiver.sendQuery(std::move(request),
+                [this, chatId, topicId](uint64_t, td::td_api::object_ptr<td::td_api::Object> object) {
+                    const td::td_api::chat *chat = m_data.getChat(chatId);
+                    if (!chat || !object || (object->get_id() != td::td_api::messages::ID)) {
+                        purple_debug_warning(config::pluginId,
+                            "Failed to load history for forum topic %d in chat %" G_GINT64_FORMAT "\n",
+                            topicId, chatId.value());
+                        return;
+                    }
+                    auto messages = td::move_tl_object_as<td::td_api::messages>(std::move(object));
+                    std::sort(messages->messages_.begin(), messages->messages_.end(),
+                              [](const td::td_api::object_ptr<td::td_api::message> &a,
+                                 const td::td_api::object_ptr<td::td_api::message> &b) {
+                                  if (!a)
+                                      return false;
+                                  return !b || (a->id_ < b->id_);
+                              });
+                    for (auto &message: messages->messages_) {
+                        if (!message || !message->topic_id_ ||
+                            (message->topic_id_->get_id() != td::td_api::messageTopicForum::ID) ||
+                            (static_cast<const td::td_api::messageTopicForum &>(*message->topic_id_).forum_topic_id_ != topicId))
+                            continue;
+                        handleIncomingMessage(m_data, *chat, std::move(message),
+                                              PendingMessageQueue::Prepend, true);
+                    }
+                });
+        }
+    }
+    return conv != nullptr;
+}
+
 int PurpleTdClient::sendGroupMessage(int purpleChatId, const char *message)
 {
-    const td::td_api::chat *chat = m_data.getChatByPurpleId(purpleChatId);
+    ChatId topicChatId;
+    int32_t topicId = 0;
+    bool forumTopic = m_data.getForumTopicByPurpleId(purpleChatId, topicChatId, topicId);
+    const td::td_api::chat *chat = forumTopic ? m_data.getChat(topicChatId)
+                                              : m_data.getChatByPurpleId(purpleChatId);
 
     if (!chat)
         purple_debug_warning(config::pluginId, "No chat found for purple id %d\n", purpleChatId);
@@ -4191,7 +4251,8 @@ int PurpleTdClient::sendGroupMessage(int purpleChatId, const char *message)
     else {
         // Into a tab that ends where its chat does, not after a gap
         ::showNewestMessages(m_data, getId(*chat));
-        int ret = transmitMessage(getId(*chat), message, m_transceiver, m_data, &PurpleTdClient::sendMessageResponse);
+        int ret = transmitMessage(getId(*chat), message, m_transceiver, m_data,
+                                  &PurpleTdClient::sendMessageResponse, topicId);
         if (ret < 0)
             return ret;
         return 0;
@@ -4907,12 +4968,99 @@ void PurpleTdClient::getGroupChatList(PurpleRoomlist *roomlist)
 
     purple_roomlist_set_in_progress(roomlist, TRUE);
     if (m_chatListReady) {
-        std::vector<const td::td_api::chat *> chats;
-        m_data.getChats(chats);
-        populateGroupChatList(roomlist, chats, m_data);
+        populateGroupChatList(roomlist);
     } else {
         purple_roomlist_ref(roomlist);
         m_pendingRoomLists.push_back(roomlist);
+    }
+}
+
+void PurpleTdClient::populateGroupChatList(PurpleRoomlist *roomlist)
+{
+    std::vector<const td::td_api::chat *> chats;
+    std::vector<std::pair<const td::td_api::chat *, PurpleRoomlistRoom *>> forumChats;
+    m_data.getChats(chats);
+    ::populateGroupChatList(roomlist, chats, m_data, forumChats);
+    if (forumChats.empty()) {
+        purple_roomlist_set_in_progress(roomlist, FALSE);
+        return;
+    }
+
+    // The asynchronous topic pages hold this room list alive until the last forum is complete.
+    purple_roomlist_ref(roomlist);
+    auto remaining = std::make_shared<size_t>(forumChats.size());
+    auto completeOne = [roomlist, remaining]() {
+        if (--(*remaining) == 0) {
+            purple_roomlist_set_in_progress(roomlist, FALSE);
+            purple_roomlist_unref(roomlist);
+        }
+    };
+
+    for (const auto &forum: forumChats) {
+        ChatId chatId = getId(*forum.first);
+        PurpleRoomlistRoom *parent = forum.second;
+        using Cursor = std::tuple<int32_t, int64_t, int32_t>;
+        auto seen = std::make_shared<std::set<Cursor>>();
+        auto fetchPage = std::make_shared<std::function<void(int32_t, int64_t, int32_t)>>();
+        *fetchPage = [this, roomlist, chatId, parent, completeOne, seen, fetchPage]
+            (int32_t offsetDate, int64_t offsetMessageId, int32_t offsetTopicId) {
+            Cursor cursor(offsetDate, offsetMessageId, offsetTopicId);
+            if (!seen->insert(cursor).second) {
+                purple_debug_warning(config::pluginId, "Forum topic pagination repeated a cursor for chat %" G_GINT64_FORMAT "\n",
+                                     chatId.value());
+                completeOne();
+                *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+                return;
+            }
+            auto request = td::td_api::make_object<td::td_api::getForumTopics>();
+            request->chat_id_ = chatId.value();
+            request->query_ = "";
+            request->icon_custom_emoji_id_ = 0;
+            request->exclude_open_ = false;
+            request->exclude_closed_ = false;
+            request->offset_date_ = offsetDate;
+            request->offset_message_id_ = offsetMessageId;
+            request->offset_forum_topic_id_ = offsetTopicId;
+            request->limit_ = 100;
+            m_transceiver.sendQuery(std::move(request),
+                [this, roomlist, chatId, parent, completeOne, seen, fetchPage, cursor]
+                (uint64_t, td::td_api::object_ptr<td::td_api::Object> object) {
+                    if (!object || (object->get_id() != td::td_api::forumTopics::ID)) {
+                        purple_debug_warning(config::pluginId,
+                            "Failed to load topics for forum chat %" G_GINT64_FORMAT "\n", chatId.value());
+                        completeOne();
+                        *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+                        return;
+                    }
+                    const auto &topics = static_cast<const td::td_api::forumTopics &>(*object);
+                    for (const auto &topic: topics.topics_) {
+                        if (!topic || !topic->info_ || topic->info_->chat_id_ != chatId.value() ||
+                            (topic->info_->forum_topic_id_ <= 0) || topic->info_->is_hidden_)
+                            continue;
+                        int32_t topicId = topic->info_->forum_topic_id_;
+                        std::string topicName = topic->info_->name_;
+                        if (topicName.empty() && topic->info_->is_general_)
+                            topicName = _("General");
+                        if (topicName.empty())
+                            topicName = formatMessage(_("Topic {}"), std::to_string(topicId));
+                        m_data.setForumTopicName(chatId, topicId, topicName);
+                        PurpleRoomlistRoom *room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM,
+                                                                            topicName.c_str(), parent);
+                        std::string address = getPurpleForumTopicName(chatId, topicId);
+                        purple_roomlist_room_add_field(roomlist, room, address.c_str());
+                        purple_roomlist_room_add(roomlist, room);
+                    }
+                    Cursor next(topics.next_offset_date_, topics.next_offset_message_id_,
+                                topics.next_offset_forum_topic_id_);
+                    if ((next != cursor) && (topics.next_offset_forum_topic_id_ > 0))
+                        (*fetchPage)(std::get<0>(next), std::get<1>(next), std::get<2>(next));
+                    else {
+                        completeOne();
+                        *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+                    }
+                });
+        };
+        (*fetchPage)(0, 0, 0);
     }
 }
 

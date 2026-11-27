@@ -147,6 +147,7 @@ struct TgMessageInfo {
         Other
     };
     MessageId   id;
+    int32_t     topicId = 0; // forum topic within a supergroup; zero outside a forum topic
     Type        type = Type::Other;
     std::string incomingGroupchatSender;
     // The name the sender goes by in the chat, idNNN, telling users of one display name apart, which
@@ -170,6 +171,7 @@ struct TgMessageInfo {
     void assign(const TgMessageInfo &other)
     {
         id = other.id;
+        topicId = other.topicId;
         type = other.type;
         incomingGroupchatSender = other.incomingGroupchatSender;
         incomingGroupchatSenderName = other.incomingGroupchatSenderName;
@@ -359,6 +361,7 @@ private:
 struct ReadReceipt {
     ChatId    chatId;
     MessageId messageId;
+    int32_t   topicId = 0;
 };
 
 // What the conversation shows of a message received in this session, so that an edit or a
@@ -474,6 +477,12 @@ public:
 
     const td::td_api::chat       *getChat(ChatId chatId) const;
     int                           getPurpleChatId(ChatId tdChatId);
+    int                           getPurpleForumTopicId(ChatId chatId, int32_t topicId);
+    bool                          getForumTopicByPurpleId(int32_t purpleChatId, ChatId &chatId,
+                                                           int32_t &topicId) const;
+    void                          setForumTopicName(ChatId chatId, int32_t topicId, const std::string &name);
+    std::string                   getForumTopicName(ChatId chatId, int32_t topicId) const;
+    bool                          markForumTopicHistoryRequested(ChatId chatId, int32_t topicId);
     const td::td_api::chat       *getChatByPurpleId(int32_t purpleChatId) const;
     const td::td_api::chat       *getPrivateChatByUserId(UserId userId) const;
     const td::td_api::user       *getUser(UserId userId) const;
@@ -559,8 +568,9 @@ public:
     // What /paste and pasting in Pidgin gave placeholders for, kept as long as the account is
     PastedAttachments          pastedAttachments;
 
-    void                       addPendingReadReceipt(ChatId chatId, MessageId messageId);
-    void                       extractPendingReadReceipts(ChatId chatId, std::vector<ReadReceipt> &receipts);
+    void                       addPendingReadReceipt(ChatId chatId, MessageId messageId, int32_t topicId = 0);
+    void                       extractPendingReadReceipts(ChatId chatId, int32_t topicId,
+                                                          std::vector<ReadReceipt> &receipts);
 
     void                       addShownMessage(ChatId chatId, MessageId messageId, ShownMessage &&message);
     ShownMessage *             findShownMessage(ChatId chatId, MessageId messageId);
@@ -647,6 +657,7 @@ private:
     };
 
     using ChatMap = std::map<ChatId, ChatInfo>;
+    using ForumTopicKey = std::pair<ChatId, int32_t>;
     using UserMap = std::map<UserId, UserInfo>;
     UserMap                            m_userInfo;
     ChatMap                            m_chatInfo;
@@ -654,6 +665,10 @@ private:
     std::map<SupergroupId, SupergroupInfo>  m_supergroups;
     std::map<SecretChatId, SecretChatPtr>   m_secretChats;
     int                                m_lastChatPurpleId = 0;
+    std::map<ForumTopicKey, int32_t>   m_forumTopicPurpleIds;
+    std::map<int32_t, ForumTopicKey>   m_purpleForumTopics;
+    std::map<ForumTopicKey, std::string> m_forumTopicNames;
+    std::set<ForumTopicKey>               m_forumTopicHistoryRequested;
 
     // List of contacts for which private chat is not known yet.
     std::vector<UserId>                m_contactUserIdsNoChat;
