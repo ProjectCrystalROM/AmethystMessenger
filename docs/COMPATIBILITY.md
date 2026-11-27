@@ -10,6 +10,8 @@ This is static compatibility evidence. The compiler version and PE subsystem alo
 
 The Telegram plugin statically links TDLib, OpenSSL 3, fmt, zlib, and the MinGW C++ runtime. Its direct DLL imports are the bundled GLib/GIO/GModule and libpurple DLLs, plus standard Windows system libraries; it has no OpenSSL, zlib, libstdc++, or libgcc DLL dependency. The import table includes Vista APIs such as `GetTickCount64`, SRW locks, condition variables, and `GetFileInformationByHandleEx`. It therefore cannot load on XP, even though the Amethyst executable, libpurple, and other protocols retain the XP target. Static import inspection identifies Vista as the minimum target; only Wine loading was performed.
 
+The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It imports Vista's `InitializeSRWLock`, links OpenSSL crypto and QRencode statically for QR login, and imports JSON-GLib plus the existing bundled GLib, libpurple, and zlib runtimes. JSON-GLib's DLL was built against the bundled GLib 2.28 SDK. Initial PE inspection shows no API-set or Universal CRT dependency; Vista is the minimum indicated by its imports. Wine package and plugin-load smoke testing is pending. Discord authentication, QR approval, messaging, and runtime testing on Vista are unverified. The Discord plugin cannot run on XP.
+
 ## Tests performed
 
 | Check | Result |
@@ -21,6 +23,9 @@ The Telegram plugin statically links TDLib, OpenSSL 3, fmt, zlib, and the MinGW 
 | GTK application startup | Passed in Wine with `--debug --nologin`. The GTK2 interface initialized and remained running through the 16-second smoke window. The process was stopped by the timeout. |
 | MSN implementation | Passed in Wine using a no-credential protocol probe. The installed `prpl-msn-pecan` implementation loaded and returned account-picker name `MSN`. |
 | Telegram plugin | Built against libpurple 2.11.0 and loaded in a fresh Wine-installed package. Debug output confirms plugin initialization. Account-picker interaction and Telegram sign-in/messaging were not tested. |
+| Discord plugin build | Passed from checked-in, SHA-256-pinned JSON-GLib 0.14.2 and libqrencode 4.1.1 source archives. `USE_QRCODE_AUTH` is enabled; QRencode and OpenSSL crypto are statically linked. |
+| Discord plugin imports | Static inspection passed for x86 and Vista subsystem target. JSON-GLib imports only bundled GLib/GIO/GObject and standard Windows DLLs. No `libwinpthread`, OpenSSL, API-set, or Universal CRT dependency is imported by the Discord plugin. |
+| Discord login and messages | Not tested; no Discord account was used. Consent UI and decline behavior are implemented but still need interactive runtime validation. |
 | Plugin selection | Passed. The installer contains `plugins/libmsn.dll` from msn-pecan and omits `pidgin.exe` and the upstream native MSN DLL. Existing protocol plugins are retained. |
 | Dependencies | Passed static recursive PE inspection for x86 architecture, API-set imports, and Universal CRT imports. Existing GTK2, NSS, and support DLLs were retained. |
 | Windows Vista SP2 | Not tested with this branded package. A user previously verified login and adding a buddy with the integrated Pecan implementation on Vista SP2. |

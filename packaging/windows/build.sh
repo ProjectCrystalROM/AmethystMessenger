@@ -10,6 +10,12 @@ if [[ -z "$telegram_dll" || ! -f "$telegram_dll" ]]; then
     echo "Set AMETHYST_TELEGRAM_DLL to the built tdlib-purple DLL." >&2
     exit 2
 fi
+discord_dll=${AMETHYST_DISCORD_DLL:-}
+json_glib_dll=${AMETHYST_JSON_GLIB_DLL:-}
+if [[ -z "$discord_dll" || ! -f "$discord_dll" || -z "$json_glib_dll" || ! -f "$json_glib_dll" ]]; then
+    echo "Set AMETHYST_DISCORD_DLL and AMETHYST_JSON_GLIB_DLL to the outputs of build-discord-plugin.sh." >&2
+    exit 2
+fi
 root=$(cd "$(dirname "$0")/../.." && pwd)
 inputs=$(realpath "$1")
 output=$(realpath -m "$2")
@@ -57,6 +63,8 @@ install_pe pidgin/pidgin.dll pidgin.dll
 install_pe libpurple/libpurple.dll libpurple.dll
 install_pe libpurple/protocols/msn/libmsn.dll plugins/libmsn.dll
 install_pe "$telegram_dll" plugins/libtelegram-tdlib.dll
+install_pe "$discord_dll" plugins/libdiscord.dll
+install -m 644 "$json_glib_dll" "$payload/libjson-glib-1.0-0.dll"
 install_pe pidgin/plugins/win32/winprefs/winprefs.dll plugins/winprefs.dll
 mkdir -p "$payload/pixmaps/pidgin/protocols"/{16,22,48}
 install -m 644 third_party/tdlib-purple/data/telegram16.png "$payload/pixmaps/pidgin/protocols/16/telegram.png"
@@ -73,6 +81,13 @@ cp libpurple/protocols/msn/ext/libmspack/COPYING.LIB "$payload/Licenses/"
 cp docs/LICENSING.md "$payload/Licenses/"
 cp third_party/tdlib-purple/LICENSE "$payload/Licenses/tdlib-purple-GPL.txt"
 cp third_party/tdlib-purple/README.md "$payload/Licenses/tdlib-purple-README.md"
+cp third_party/purple-discord/LICENSE "$payload/Licenses/purple-discord-GPL.txt"
+cp third_party/purple-discord/README.md "$payload/Licenses/purple-discord-README.md"
+cp third_party/sources/json-glib-0.14.2.tar.xz "$payload/Licenses/"
+cp third_party/sources/libqrencode-4.1.1.tar.gz "$payload/Licenses/"
+cp third_party/sources/SHA256SUMS-discord "$payload/Licenses/"
+tar -xOf third_party/sources/json-glib-0.14.2.tar.xz json-glib-0.14.2/COPYING > "$payload/Licenses/JSON-GLib-LGPL-2.1.txt"
+tar -xOf third_party/sources/libqrencode-4.1.1.tar.gz libqrencode-4.1.1/COPYING > "$payload/Licenses/libqrencode-LGPL-2.1.txt"
 cp third_party/licenses/* "$payload/Licenses/"
 touch "$payload/.amethyst-messenger"
 

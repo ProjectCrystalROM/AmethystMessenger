@@ -16,12 +16,14 @@ Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3, Pyth
 
 ```sh
 AMETHYST_TELEGRAM_DLL=/path/to/telegram-plugin-output/libtelegram-tdlib.dll \
+AMETHYST_DISCORD_DLL=/path/to/discord-plugin-output/libdiscord.dll \
+AMETHYST_JSON_GLIB_DLL=/path/to/discord-plugin-output/libjson-glib-1.0-0.dll \
 make -f Makefile.mingw installer_offline \
   AMETHYST_INPUTS=/path/to/verified-inputs \
   AMETHYST_OUTPUT="$PWD/output"
 ```
 
-The output is `amethyst-messenger-2.11.0-win32.exe`, with `SHA256SUMS`. `packaging/windows/build.sh` builds libpurple, the GTK UI, launcher, and msn-pecan plugin, then stages the unaffected official runtime. Supply `AMETHYST_TELEGRAM_DLL` pointing to the DLL produced by `packaging/windows/build-telegram-plugin.sh`; see [Telegram on Windows](TELEGRAM-WINDOWS.md) for its dependency setup. The packaging step omits the old launcher and native MSN plugin. It does not modify an existing installation or user profile.
+The output is `amethyst-messenger-2.11.0-win32.exe`, with `SHA256SUMS`. `packaging/windows/build.sh` builds libpurple, the GTK UI, launcher, and msn-pecan plugin, then stages the unaffected official runtime plus Telegram and Discord plugins. Build tdlib-purple as described in [Telegram on Windows](TELEGRAM-WINDOWS.md). Build Discord and its QR login support with [Discord on Windows](DISCORD-WINDOWS.md); this emits both the plugin and its JSON-GLib runtime. The package omits the old launcher and native MSN plugin. It does not modify an existing installation or user profile.
 
 The build regenerates the Windows `config.h` from the checked-in MinGW template with the release version substituted, then regenerates the MinGW `libpurple/version.h`. It embeds the 32-bit XP subsystem version and uses static MinGW GCC runtime linkage. Review all resulting PE imports with `objdump -p` or PE inspection tools, including the recursively bundled DLLs, whenever compiler or runtime inputs change. These settings alone do not prove XP compatibility.
 

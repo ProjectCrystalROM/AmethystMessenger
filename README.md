@@ -6,7 +6,7 @@
 
 Amethyst Messenger is an independently maintained multiprotocol instant messaging client derived from Pidgin 2.11.0. The project preserves the classic desktop messaging experience on historical operating systems and restores access to networks left behind by their original operators.
 
-The Windows build integrates msn-pecan as the MSN protocol implementation and configures it for CrossTalk. MSN appears as **MSN** in account setup. The Windows installer also includes the tdlib-purple Telegram plugin; its Vista minimum and login status are documented below. The project values historical compatibility, lightweight software, user choice, and preservation.
+The Windows build integrates msn-pecan as the MSN protocol implementation and configures it for CrossTalk. MSN appears as **MSN** in account setup. The installer also includes tdlib-purple for Telegram and purple-discord for Discord. Telegram and Discord require Vista or later; see their platform notes below. The project values historical compatibility, lightweight software, user choice, and preservation.
 
 Amethyst Messenger is independent and is not affiliated with the original Pidgin developers, Microsoft, the msn-pecan developers, or the CrossTalk operators. Its source preserves upstream copyright notices and licensing terms.
 
@@ -20,7 +20,7 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 | Windows Vista SP2 x64 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
 | Wine | Used for packaging and startup smoke tests; this does not establish Windows compatibility. |
 
-The application and existing bundled protocols retain the XP SP3 x86 target. The Telegram plugin requires Windows Vista or later; it imports Vista APIs and will not load on XP.
+The application and existing bundled protocols retain the XP SP3 x86 target. The Telegram and Discord plugins require Windows Vista or later; they import Vista APIs and will not load on XP.
 
 The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. Other bundled protocols remain available, subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
@@ -43,6 +43,10 @@ The integrated msn-pecan protocol is packaged as `plugins/libmsn.dll` with proto
 ## Telegram
 
 The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Forum supergroups appear as Pidgin contact groups, with each visible topic as a chat room beneath its group. On Vista, the tester confirmed topic history and text display in chronological order; scrolling fetches older history. One-to-one DM history also works. Topic-specific attachment sending remains unsupported. Wine startup testing confirms libpurple loads the plugin, and Vista account authentication, regular chat messaging, and forum-topic history have been tested. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, feature limits, and the Vista requirement.
+
+## Discord
+
+The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. Discord does not authorize this client integration, and Amethyst cannot promise that Discord will continue allowing access. Discord account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. Build and plugin loading are checked locally, but live Discord login and messaging have not been tested.
 
 ## Source, attribution, and contributions
 

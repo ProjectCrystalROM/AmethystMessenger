@@ -21,6 +21,14 @@ runtime source bundle. The archive includes SHA-256 checksums and the Windows
 compatibility patch. The source repository keeps the Amethyst patch/build
 scripts; see [TELEGRAM-WINDOWS.md](TELEGRAM-WINDOWS.md).
 
+The repository includes the GPL-3.0-or-later purple-discord source at
+`third_party/purple-discord/`, based on upstream commit
+`2b85bbfad5e915f60f2c4ca30c1e7d720762c148`. QR login is enabled with the
+plugin's OpenSSL crypto backend. JSON-GLib 0.14.2 and libqrencode 4.1.1 source
+archives are checked in under `third_party/sources/`; their hashes are in
+`SHA256SUMS-discord`. Their LGPL-2.1 license texts and source archives are
+included in the installer. See [DISCORD-WINDOWS.md](DISCORD-WINDOWS.md).
+
 ## GTK runtime bundle
 
 The exact upstream GTK runtime source package for bundle version 2.16.6.3 is available from the [Pidgin SourceForge archive](https://sourceforge.net/projects/pidgin/files/GTK%2B%20for%20Windows/2.16.6.3/gtk-runtime-2.16.6.3-src.zip/download). It includes source and build recipes for ATK 1.32.0-2, Cairo 1.8.10-1, Expat 2.1.0-1, Fontconfig 2.8.0-2, Freetype 2.4.10-1, gettext 0.18.1.1-2, GLib 2.28.8-1, GTK+ 2.16.6-2, libpng 1.4.12-1, Pango 1.29.4-1daa, and zlib 1.2.8_daa1. The authoritative versions, source URLs, source hashes, and local patches are listed in [`generate_gtk_zip.sh`](../pidgin/win32/nsis/generate_gtk_zip.sh).
