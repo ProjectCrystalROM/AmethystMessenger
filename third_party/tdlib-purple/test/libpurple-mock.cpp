@@ -1,0 +1,2344 @@
+#include "libpurple-mock.h"
+#include "purple-events.h"
+#include <purple.h>
+#include <langinfo.h>
+#include <locale.h>
+#include <stdarg.h>
+#include <algorithm>
+#include <vector>
+#include <map>
+#include <gtest/gtest.h>
+
+struct AccountInfo {
+    PurpleAccount                     *account;
+    std::vector<PurpleBuddy *>         buddies;
+    std::vector<PurpleChat *>          chats;
+    std::vector<PurpleConversation *>  conversations;
+    std::map<std::string, std::string> stringsOptions;
+};
+
+std::vector<AccountInfo>  g_accounts;
+PurplePlugin             *g_plugin;
+
+// The user's locale is only consulted: switching the process to it would change what is tested
+static const std::string &consoleCodeset()
+{
+    static const std::string codeset = [] {
+        std::string result = "US-ASCII";
+        locale_t locale = newlocale(LC_CTYPE_MASK, "", (locale_t)0);
+        if (locale) {
+            result = nl_langinfo_l(CODESET, locale);
+            freelocale(locale);
+        }
+        return result;
+    }();
+    return codeset;
+}
+
+// The plugin's text is UTF-8, while the terminal reading the suite's output may legitimately be
+// anything else. Printed raw, a curly quote in a GLib error reaches a KOI8 xterm as the C1
+// control OSC, and the terminal swallows the rest of the run, verdict included. g_print would
+// convert, but only when writing to a terminal itself, never through make or ninja.
+void printToConsole(const std::string &text)
+{
+    gchar *converted = g_convert_with_fallback(text.c_str(), text.size(), consoleCodeset().c_str(),
+                                               "UTF-8", "?", NULL, NULL, NULL);
+    if (converted) {
+        fputs(converted, stdout);
+        g_free(converted);
+    } else {
+        // Not UTF-8 after all, or not convertible: escape whatever lies beyond ASCII
+        for (unsigned char c: text) {
+            if (c < 0x80)
+                putchar(c);
+            else
+                printf("\\x%02x", c);
+        }
+    }
+}
+
+extern "C" {
+
+#define EVENT(type, ...) g_purpleEvents.addEvent(std::make_unique<type>(__VA_ARGS__))
+
+static void printDebug(const char *prefix, const char *category, const char *format, va_list va)
+{
+    gchar *message = g_strdup_vprintf(format, va);
+    printToConsole(std::string(prefix) + category + ": " + message);
+    g_free(message);
+}
+
+void purple_debug_misc(const char *category, const char *format, ...)
+{
+    va_list va;
+    va_start(va, format);
+    printDebug("", category, format, va);
+    va_end(va);
+}
+
+void purple_debug_info(const char *category, const char *format, ...)
+{
+    va_list va;
+    va_start(va, format);
+    printDebug("Info: ", category, format, va);
+    va_end(va);
+}
+
+void purple_debug_warning(const char *category, const char *format, ...)
+{
+    va_list va;
+    va_start(va, format);
+    printDebug("Warning: ", category, format, va);
+    va_end(va);
+}
+
+void purple_debug_error(const char *category, const char *format, ...)
+{
+    va_list va;
+    va_start(va, format);
+    printDebug("Error: ", category, format, va);
+    va_end(va);
+}
+
+const char *purple_account_get_username(const PurpleAccount *account)
+{
+    return account->username;
+}
+
+const char *purple_account_get_alias(const PurpleAccount *account)
+{
+    return account->alias;
+}
+
+const gchar *purple_account_get_name_for_display(const PurpleAccount *account)
+{
+    return purple_account_get_alias(account) ? : purple_account_get_username(account);
+}
+
+const char *purple_account_get_password(const PurpleAccount *account)
+{
+    return account->password;
+}
+
+void purple_account_set_password(PurpleAccount *account, const char *password)
+{
+    g_free(account->password);
+    account->password = g_strdup(password);
+}
+
+void purple_account_set_remember_password(PurpleAccount *account, gboolean value)
+{
+    account->remember_pass = value;
+}
+
+PurpleConnection *purple_account_get_connection(const PurpleAccount *account)
+{
+    return account->gc;
+}
+
+static bool g_presenceIdle = false;
+
+extern "C++" void setPresenceIdle(bool idle)
+{
+    g_presenceIdle = idle;
+}
+
+PurplePresence *purple_account_get_presence(const PurpleAccount *account)
+{
+    return NULL;
+}
+
+gboolean purple_presence_is_idle(const PurplePresence *presence)
+{
+    return g_presenceIdle;
+}
+
+gboolean purple_account_is_connected(const PurpleAccount *account)
+{
+    return PURPLE_CONNECTION_IS_CONNECTED(account->gc);
+}
+
+void purple_account_set_alias(PurpleAccount *account, const char *alias)
+{
+    free(account->alias);
+    account->alias = strdup(alias);
+    EVENT(AccountSetAliasEvent, account, alias);
+}
+
+PurpleAccount *purple_account_new(const char *username, const char *protocol_id)
+{
+    // Zeroed, the list of blocked users among the rest
+    PurpleAccount *account = new PurpleAccount();
+    account->username = strdup(username);
+    account->protocol_id = protocol_id ? strdup(protocol_id) : nullptr;
+    account->alias = nullptr;
+    account->proxy_info = NULL;
+
+    g_accounts.emplace_back();
+    g_accounts.back().account = account;
+
+    return account;
+}
+
+PurpleBlistNode root = {
+    .type = PURPLE_BLIST_OTHER_NODE,
+    .prev = NULL,
+    .next = NULL,
+    .parent = NULL,
+    .child = NULL,
+    .settings = NULL,
+    .ui_data = NULL,
+    .flags = (PurpleBlistNodeFlags)0
+};
+
+void purple_account_destroy(PurpleAccount *account)
+{
+    free(account->username);
+    free(account->protocol_id);
+    free(account->alias);
+    g_free(account->password);
+    g_slist_free_full(account->deny, g_free);
+
+    auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
+                           [account](const AccountInfo &info) { return (info.account == account); });
+    ASSERT_FALSE(it == g_accounts.end()) << "Destroying unknown account";
+    while (!it->buddies.empty())
+        purple_blist_remove_buddy(it->buddies.back());
+    while (!it->conversations.empty())
+        purple_conversation_destroy(it->conversations.back());
+    while (!it->chats.empty())
+        purple_blist_remove_chat(it->chats.back());
+    g_accounts.erase(it);
+
+    delete account;
+    // Groups last for the test case (see clearGroups)
+    for (PurpleBlistNode *node = root.child; node; node = node->next)
+        ASSERT_EQ(PURPLE_BLIST_GROUP_NODE, node->type) << "Blist nodes remain";
+}
+
+const char *purple_account_get_protocol_id(const PurpleAccount *account)
+{
+    return account->protocol_id ? account->protocol_id : "";
+}
+
+PurpleAccount *purple_accounts_find(const char *name, const char *protocol)
+{
+    auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
+                           [name, protocol](const AccountInfo &account) {
+                               return !strcmp(account.account->username, name) &&
+                                      !strcmp(purple_account_get_protocol_id(account.account),
+                                              protocol ? protocol : "");
+                           });
+    if (it != g_accounts.end())
+        return it->account;
+    return NULL;
+}
+
+GList *purple_connections_get_all(void)
+{
+    // Libpurple's own, not to be freed: kept until asked again
+    static GList *connections = NULL;
+    g_list_free(connections);
+    connections = NULL;
+    for (const AccountInfo &account: g_accounts)
+        if (account.account->gc)
+            connections = g_list_append(connections, account.account->gc);
+    return connections;
+}
+
+void purple_blist_add_account(PurpleAccount *account)
+{
+    EVENT(ShowAccountEvent, account);
+}
+
+static void addNode(PurpleBlistNode &node)
+{
+    node.next = root.child;
+    node.prev = NULL;
+    if (root.child)
+        root.child->prev = &node;
+    root.child = &node;
+}
+
+static void removeNode(PurpleBlistNode &node)
+{
+    PurpleBlistNode *found;
+    for (found = root.child; found; found = found->next)
+        if (found == &node)
+            break;
+    ASSERT_TRUE(found != NULL) << "Removing unknown blist node";
+    if (node.prev)
+        node.prev->next = node.next;
+    if (node.next)
+        node.next->prev = node.prev;
+    if (&node == root.child)
+        root.child = node.next;
+}
+
+void purple_blist_add_buddy(PurpleBuddy *buddy, PurpleContact *contact, PurpleGroup *group, PurpleBlistNode *node)
+{
+    ASSERT_EQ(NULL, node) << "Not supported";
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [buddy](const AccountInfo &info) { return (info.account == buddy->account); });
+    ASSERT_FALSE(pAccount == g_accounts.end()) << "Adding buddy with unknown account";
+
+    // As in libpurple, adding a buddy already in the list moves it to the group
+    if (std::find(pAccount->buddies.begin(), pAccount->buddies.end(), buddy) != pAccount->buddies.end()) {
+        buddy->node.parent = group ? &group->node : NULL;
+        EVENT(AddBuddyEvent, buddy->name, buddy->alias, buddy->account, contact, group, node);
+        return;
+    }
+
+    ASSERT_TRUE(std::find_if(pAccount->buddies.begin(), pAccount->buddies.end(), 
+                             [buddy](const PurpleBuddy *existing) {
+                                 return !strcmp(existing->name, buddy->name);
+                             }) == pAccount->buddies.end())
+        << "Buddy already exists in this account";
+
+    buddy->node.parent = group ? &group->node : NULL;
+    addNode(buddy->node);
+    pAccount->buddies.push_back(buddy);
+
+    EVENT(AddBuddyEvent, buddy->name, buddy->alias, buddy->account, contact, group, node);
+}
+
+void purple_blist_remove_account(PurpleAccount *account)
+{
+    // TODO add event
+}
+
+void purple_blist_remove_buddy(PurpleBuddy *buddy)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [buddy](const AccountInfo &info) { return (info.account == buddy->account); });
+    ASSERT_FALSE(pAccount == g_accounts.end()) << "Removing buddy with unknown account";
+
+    auto it = std::find(pAccount->buddies.begin(), pAccount->buddies.end(), buddy);
+    ASSERT_FALSE(it == pAccount->buddies.end()) << "Removing unkown buddy";
+    pAccount->buddies.erase(it);
+
+    EVENT(RemoveBuddyEvent, buddy->account, buddy->name);
+    removeNode(buddy->node);
+    purple_buddy_destroy(buddy);
+}
+
+static gboolean
+purple_strings_are_different(const char *one, const char *two)
+{
+        return !((one && two && g_utf8_collate(one, two) == 0) ||
+                        ((one == NULL || *one == '\0') && (two == NULL || *two == '\0')));
+}
+
+void purple_blist_alias_buddy(PurpleBuddy *buddy, const char *alias)
+{
+    ASSERT_NE(nullptr, buddy);
+
+    // Similar to real libpurple
+    if (purple_strings_are_different(buddy->alias, alias)) {
+        free(buddy->alias);
+        buddy->alias = strdup(alias);
+        EVENT(AliasBuddyEvent, buddy->name, alias);
+    }
+}
+
+static char *getChatName(const PurpleChat *chat)
+{
+    auto        pluginInfo  = (PurplePluginProtocolInfo *)g_plugin->info->extra_info;
+    GList      *chatInfo    = (pluginInfo)->chat_info(chat->account->gc);
+    const char *componentId = ((proto_chat_entry *)chatInfo->data)->identifier;
+    char       *name        = (char *)g_hash_table_lookup(chat->components, componentId);
+
+    g_list_free_full(chatInfo, g_free);
+    return name;
+}
+
+void purple_blist_remove_chat(PurpleChat *chat)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [chat](const AccountInfo &info) { return (info.account == chat->account); });
+    ASSERT_FALSE(pAccount == g_accounts.end()) << "Removing buddy with unknown account";
+
+    auto it = std::find(pAccount->chats.begin(), pAccount->chats.end(), chat);
+    ASSERT_FALSE(it == pAccount->chats.end()) << "Removing unkown chat";
+    pAccount->chats.erase(it);
+
+    const char *inviteLink = (const char *)g_hash_table_lookup(chat->components, (char *)"link");
+    EVENT(RemoveChatEvent, getChatName(chat), inviteLink ? inviteLink : "");
+
+    free(chat->alias);
+    g_hash_table_destroy(chat->components);
+    removeNode(chat->node);
+    g_hash_table_destroy(chat->node.settings);
+    delete chat;
+}
+
+GSList *purple_find_buddies(PurpleAccount *account, const char *name)
+{
+    GSList *result = NULL;
+    for (const AccountInfo &info: g_accounts)
+        if (info.account == account)
+            for (PurpleBuddy *buddy: info.buddies)
+                if (!name || !strcmp(buddy->name, name))
+                    result = g_slist_prepend(result, buddy);
+    return result;
+}
+
+// Contacts are not modelled: a buddy is its own contact
+const char *purple_buddy_get_contact_alias(PurpleBuddy *buddy)
+{
+    return buddy->alias ? buddy->alias : buddy->name;
+}
+
+const char *purple_buddy_get_alias_only(PurpleBuddy *buddy)
+{
+    return buddy->alias;
+}
+
+const char *purple_buddy_get_alias(PurpleBuddy *buddy)
+{
+    return buddy->alias ? buddy->alias : buddy->name;
+}
+
+PurpleGroup *purple_buddy_get_group(PurpleBuddy *buddy)
+{
+    return reinterpret_cast<PurpleGroup *>(buddy->node.parent);
+}
+
+const char *purple_buddy_get_name(const PurpleBuddy *buddy)
+{
+    return buddy->name;
+}
+
+PurpleAccount *purple_buddy_get_account(const PurpleBuddy *buddy)
+{
+    return buddy->account;
+}
+
+static void newNode(PurpleBlistNode &node, PurpleBlistNodeType type)
+{
+    node.child = NULL;
+    node.next = NULL;
+    node.parent = NULL;
+    node.prev = NULL;
+    node.type = type;
+    node.flags = (PurpleBlistNodeFlags)0;
+    node.settings = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+}
+
+PurpleBuddy *purple_buddy_new(PurpleAccount *account, const char *name, const char *alias)
+{
+    PurpleBuddy *buddy = new PurpleBuddy;
+
+    buddy->account = account;
+    buddy->name = strdup(name);
+    buddy->alias = alias ? strdup(alias) : NULL;
+    buddy->node.parent = NULL;
+    newNode(buddy->node, PURPLE_BLIST_BUDDY_NODE);
+
+    return buddy;
+}
+
+void purple_buddy_destroy(PurpleBuddy *buddy)
+{
+    free(buddy->name);
+    free(buddy->alias);
+    g_hash_table_destroy(buddy->node.settings);
+    delete buddy;
+}
+
+void
+purple_buddy_icons_set_for_user(PurpleAccount *account, const char *username,
+                                void *icon_data, size_t icon_len,
+                                const char *checksum)
+{
+    EVENT(SetUserPhotoEvent, account, username, icon_data, icon_len);
+}
+
+PurpleStoredImage *
+purple_buddy_icons_node_set_custom_icon(PurpleBlistNode *node,
+                                        guchar *icon_data, size_t icon_len)
+{
+    EXPECT_TRUE(PURPLE_BLIST_NODE_IS_CHAT(node));
+    EVENT(SetUserPhotoEvent, PURPLE_CHAT(node)->account, getChatName(PURPLE_CHAT(node)), icon_data, icon_len);
+    return NULL;
+}
+
+PurpleChat *purple_chat_new(PurpleAccount *account, const char *alias, GHashTable *components)
+{
+    PurpleChat *chat = new PurpleChat;
+    chat->account = account;
+    chat->alias = strdup(alias);
+    chat->components = components;
+    newNode(chat->node, PURPLE_BLIST_CHAT_NODE);
+    return chat;
+}
+
+void purple_blist_add_chat(PurpleChat *chat, PurpleGroup *group, PurpleBlistNode *node)
+{
+    ASSERT_EQ(NULL, node) << "Not supported";
+    char *name = getChatName(chat);
+
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [chat](const AccountInfo &info) { return (info.account == chat->account); });
+    ASSERT_FALSE(pAccount == g_accounts.end()) << "Adding chat with unknown account";
+
+    // One in the buddy list already is moved, as real libpurple does, which tells only the signal
+    if (std::find(pAccount->chats.begin(), pAccount->chats.end(), chat) != pAccount->chats.end()) {
+        chat->node.parent = group ? &group->node : NULL;
+        EVENT(AddChatEvent, name, chat->alias, chat->account, group, node);
+        emitBlistNodeAdded(&chat->node);
+        return;
+    }
+
+    ASSERT_TRUE(std::find_if(pAccount->chats.begin(), pAccount->chats.end(), 
+                             [name](const PurpleChat *existing) {
+                                 return !strcmp(getChatName(existing), name);
+                             }) == pAccount->chats.end())
+        << "Chat already exists in this account";
+
+    chat->node.parent = group ? &group->node : NULL;
+    addNode(chat->node);
+    pAccount->chats.push_back(chat);
+
+    EVENT(AddChatEvent, name, chat->alias, chat->account, group, node);
+    emitBlistNodeAdded(&chat->node);
+}
+
+PurpleGroup *purple_chat_get_group(PurpleChat *chat)
+{
+    return reinterpret_cast<PurpleGroup *>(chat->node.parent);
+}
+
+PurpleChat *purple_blist_find_chat(PurpleAccount *account, const char *name)
+{
+    // real purple_blist_find_chat does this
+    if (!purple_account_is_connected(account))
+        return NULL;
+
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(pAccount == g_accounts.end()) << "Searching chat with unknown account";
+
+    if (pAccount != g_accounts.end()) {
+        auto it = std::find_if(pAccount->chats.begin(), pAccount->chats.end(),
+                               [name](const PurpleChat *existing) {
+                                   return !strcmp(getChatName(existing), name);
+                               });
+        if (it != pAccount->chats.end())
+            return *it;
+    }
+
+    return NULL;
+}
+
+const char *purple_chat_get_name(PurpleChat *chat)
+{
+    if (chat->alias)
+        return chat->alias;
+    return getChatName(chat);
+}
+
+PurpleAccount *purple_chat_get_account(PurpleChat *chat)
+{
+    return chat->account;
+}
+
+void purple_blist_alias_chat(PurpleChat *chat, const char *alias)
+{
+    free(chat->alias);
+    chat->alias = strdup(alias);
+    EVENT(AliasChatEvent, getChatName(chat), alias);
+}
+
+void purple_connection_error(PurpleConnection *gc, const char *reason)
+{
+    EVENT(ConnectionErrorEvent, gc, reason);
+}
+
+void purple_connection_error_reason(PurpleConnection *gc, PurpleConnectionError reason, const char *description)
+{
+    EVENT(ConnectionErrorEvent, gc, description);
+}
+
+PurpleAccount *purple_connection_get_account(const PurpleConnection *gc)
+{
+    return gc->account;
+}
+
+void *purple_connection_get_protocol_data(const PurpleConnection *connection)
+{
+    return connection->proto_data;
+}
+
+PurpleConnectionState purple_connection_get_state(const PurpleConnection *gc)
+{
+    return gc->state;
+}
+
+void purple_connection_set_protocol_data(PurpleConnection *connection, void *proto_data)
+{
+    connection->proto_data = proto_data;
+}
+
+void purple_connection_set_state(PurpleConnection *gc, PurpleConnectionState state)
+{
+    gc->state = state;
+    EVENT(ConnectionSetStateEvent, gc, state);
+}
+
+void purple_connection_update_progress(PurpleConnection *gc, const char *text,
+									 size_t step, size_t count)
+{
+    EVENT(ConnectionUpdateProgressEvent, gc, step, count);
+}
+
+static PurpleConversation *purple_conversation_new_impl(PurpleConversationType type,
+										PurpleAccount *account,
+										const char *name)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(pAccount == g_accounts.end()) << "Adding conversation with unknown account";
+
+    if (pAccount != g_accounts.end()) {
+        PurpleConversation *conv = purple_find_conversation_with_account(type, name, account);
+        if (conv) {
+            if ((type == PURPLE_CONV_TYPE_CHAT) && purple_conv_chat_has_left(purple_conversation_get_chat_data(conv))) {
+                // Rejoin, like real libpurple does
+                purple_conversation_get_chat_data(conv)->left = FALSE;
+                return conv;
+            }
+            EXPECT_TRUE(false) << "Conversation with this name already exists to this account";
+        }
+    }
+
+    PurpleConversation *conv = new PurpleConversation;
+    conv->type = type;
+    conv->account = account;
+    conv->name = strdup(name);
+    conv->title = NULL;
+    conv->ui_ops = NULL;
+    conv->logging = TRUE;
+    if (conv->type == PURPLE_CONV_TYPE_IM) {
+        conv->u.im = new PurpleConvIm;
+        conv->u.im->conv = conv;
+    }
+    if (conv->type == PURPLE_CONV_TYPE_CHAT) {
+        conv->u.chat = new PurpleConvChat;
+        conv->u.chat->conv = conv;
+        conv->u.chat->left = FALSE;
+        conv->u.chat->id = 0;
+    }
+
+    if (pAccount != g_accounts.end())
+        pAccount->conversations.push_back(conv);
+
+    return conv;
+}
+
+PurpleConversation *purple_conversation_new(PurpleConversationType type,
+										PurpleAccount *account,
+										const char *name)
+{
+    EVENT(NewConversationEvent, type, account, name);
+    return purple_conversation_new_impl(type, account, name);
+}
+
+void purple_conversation_set_logging(PurpleConversation *conv, gboolean log)
+{
+    conv->logging = log;
+}
+
+gboolean purple_conversation_is_logging(const PurpleConversation *conv)
+{
+    return conv->logging;
+}
+
+void purple_conversation_destroy(PurpleConversation *conv)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [conv](const AccountInfo &info) { return (info.account == conv->account); });
+    ASSERT_FALSE(pAccount == g_accounts.end()) << "Removing conversation with unknown account";
+
+    auto it = std::find(pAccount->conversations.begin(), pAccount->conversations.end(), conv);
+    ASSERT_FALSE(it == pAccount->conversations.end()) << "Removing unkown conversation";
+    pAccount->conversations.erase(it);
+
+    free(conv->name);
+    free(conv->title);
+    if (conv->type == PURPLE_CONV_TYPE_IM)
+        delete conv->u.im;
+    if (conv->type == PURPLE_CONV_TYPE_CHAT)
+        delete conv->u.chat;
+    delete conv;
+}
+
+PurpleConversationType purple_conversation_get_type(const PurpleConversation *conv)
+{
+    return conv->type;
+}
+
+const char *purple_conversation_get_name(const PurpleConversation *conv)
+{
+    return conv->name;
+}
+
+PurpleConvIm *purple_conversation_get_im_data(const PurpleConversation *conv)
+{
+    if (conv->type == PURPLE_CONV_TYPE_IM)
+        return conv->u.im;
+
+    return NULL;
+}
+
+PurpleConvChat *purple_conversation_get_chat_data(const PurpleConversation *conv)
+{
+    if (conv->type == PURPLE_CONV_TYPE_CHAT)
+        return conv->u.chat;
+
+    return NULL;
+}
+
+PurpleAccount *purple_conversation_get_account(const PurpleConversation *conv)
+{
+    return conv->account;
+}
+
+const char *purple_conversation_get_title(const PurpleConversation *conv)
+{
+    return conv->title;
+}
+
+void purple_conversation_set_title(PurpleConversation *conv, const char *title)
+{
+    // Duplicated first: the caller may pass the title it is replacing
+    char *replacement = strdup(title);
+    free(conv->title);
+    conv->title = replacement;
+    EVENT(ConvSetTitleEvent, conv->name, conv->title);
+}
+
+static std::vector<std::string> g_loggedMessages;
+static bool                     g_loggingPreferred = true;
+static int                      g_logTotalSize     = 1;
+
+void purple_conversation_write(PurpleConversation *conv, const char *who,
+		const char *message, PurpleMessageFlags flags,
+		time_t mtime)
+{
+    if (conv->logging && !(flags & PURPLE_MESSAGE_NO_LOG))
+        g_loggedMessages.push_back(message);
+    EVENT(ConversationWriteEvent, conv->name, who ? who : "", message, flags, mtime);
+}
+
+PurpleConversation *purple_conv_im_get_conversation(const PurpleConvIm *im)
+{
+    return im->conv;
+}
+
+PurpleConversation *purple_conv_chat_get_conversation(const PurpleConvChat *chat)
+{
+    return chat->conv;
+}
+
+int purple_conv_chat_get_id(const PurpleConvChat *chat)
+{
+    return chat->id;
+}
+
+gboolean purple_conv_chat_has_left(PurpleConvChat *chat)
+{
+    return chat->left;
+}
+
+void purple_conv_chat_left(PurpleConvChat *chat)
+{
+    chat->left = TRUE;
+}
+
+void purple_conv_im_write(PurpleConvIm *im, const char *who,
+						const char *message, PurpleMessageFlags flags,
+						time_t mtime)
+{
+    purple_conversation_write(purple_conv_im_get_conversation(im), who, message, flags, mtime);
+}
+
+void purple_conv_chat_write(PurpleConvChat *chat, const char *who,
+						  const char *message, PurpleMessageFlags flags,
+						  time_t mtime)
+{
+    purple_conversation_write(purple_conv_chat_get_conversation(chat), who, message, flags, mtime);
+}
+
+// Only what is dropped into Pidgin's conversations is fetched, which the tests do not do
+PurpleUtilFetchUrlData *purple_util_fetch_url_request_len(const gchar *url, gboolean full, const gchar *user_agent,
+                                                          gboolean http11, const gchar *request,
+                                                          gboolean include_headers, gssize max_len,
+                                                          PurpleUtilFetchUrlCallback callback, void *data)
+{
+    return NULL;
+}
+
+
+void purple_conv_chat_set_topic(PurpleConvChat *chat, const char *who,
+							  const char *topic)
+{
+    EVENT(ChatSetTopicEvent, chat->conv->name, topic ? topic : "", who ? who : "");
+}
+
+const char *purple_time_format(const struct tm *tm)
+{
+    static char buf[80];
+    strftime(buf, sizeof(buf), "%X", tm);
+    return buf;
+}
+
+const char *purple_date_format_long(const struct tm *tm)
+{
+    static char buf[80];
+    strftime(buf, sizeof(buf), "%x %X", tm);
+    return buf;
+}
+
+gboolean purple_debug_is_enabled(void)
+{
+    return true;
+}
+
+gboolean purple_debug_is_verbose(void)
+{
+    return true;
+}
+
+PurpleBuddy *purple_find_buddy(PurpleAccount *account, const char *name)
+{
+    // Unlike purple_blist_find_chat, libpurple's purple_find_buddy finds a buddy whether the
+    // account is connected or not
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(pAccount == g_accounts.end()) << "Looking for buddy with unknown account";
+
+    if (pAccount != g_accounts.end()) {
+        auto it = std::find_if(pAccount->buddies.begin(), pAccount->buddies.end(),
+                               [name](const PurpleBuddy *buddy) {
+                                   return !strcmp(purple_buddy_get_name(buddy), name);
+                               });
+        if (it != pAccount->buddies.end())
+            return *it;
+    }
+
+    return NULL;
+}
+
+PurpleConversation *purple_find_chat(const PurpleConnection *gc, int id)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [gc](const AccountInfo &info) { return (info.account == gc->account); });
+    EXPECT_FALSE(pAccount == g_accounts.end()) << "Looking for buddy with unknown account";
+
+    if (pAccount != g_accounts.end()) {
+        auto it = std::find_if(pAccount->conversations.begin(), pAccount->conversations.end(),
+                               [id](const PurpleConversation *conv) {
+                                   return (conv->type == PURPLE_CONV_TYPE_CHAT) &&
+                                          (conv->u.chat->id == id);
+                               });
+        if (it != pAccount->conversations.end())
+            return *it;
+    }
+
+    return NULL;
+}
+
+PurpleConversation *purple_find_conversation_with_account(
+		PurpleConversationType type, const char *name,
+		const PurpleAccount *account)
+{
+    auto pAccount = std::find_if(g_accounts.begin(), g_accounts.end(),
+                                 [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(pAccount == g_accounts.end()) << "Adding conversation with unknown account";
+
+    if (pAccount != g_accounts.end()) {
+        auto it = std::find_if(pAccount->conversations.begin(), pAccount->conversations.end(),
+                               [type, name](PurpleConversation *existing) {
+                                   return !strcmp(existing->name, name) && (existing->type == type);
+                               });
+        if (it != pAccount->conversations.end())
+            return *it;
+    }
+    return NULL;
+}
+
+GList *purple_get_conversations(void)
+{
+    // libpurple's own list, not to be freed by the caller: made anew each time
+    static GList *conversations = NULL;
+    g_list_free(conversations);
+    conversations = NULL;
+    for (const AccountInfo &info: g_accounts)
+        for (PurpleConversation *conv: info.conversations)
+            conversations = g_list_append(conversations, conv);
+    return conversations;
+}
+
+void purple_notify_close(PurpleNotifyType type, void *ui_handle)
+{
+}
+
+void *purple_notify_message(void *handle, PurpleNotifyMsgType type,
+						  const char *title, const char *primary,
+						  const char *secondary, PurpleNotifyCloseCallback cb,
+						  gpointer user_data)
+{
+    // TODO event
+    return NULL;
+}
+
+// Custom smileys, as Pidgin has them; other front-ends turn them down
+static bool g_customSmileys = false;
+
+extern "C++" void setCustomSmileys(bool supported)
+{
+    g_customSmileys = supported;
+}
+
+gboolean purple_conv_custom_smiley_add(PurpleConversation *conv, const char *smile,
+                                       const char *cksum_type, const char *chksum, gboolean remote)
+{
+    if (!g_customSmileys)
+        return FALSE;
+    EVENT(CustomSmileyAddEvent, conv->name, smile);
+    return TRUE;
+}
+
+void purple_conv_custom_smiley_write(PurpleConversation *conv, const char *smile,
+                                     const guchar *data, gsize size)
+{
+    EVENT(CustomSmileyWriteEvent, conv->name, smile, size);
+}
+
+void purple_conv_custom_smiley_close(PurpleConversation *conv, const char *smile)
+{
+    EVENT(CustomSmileyCloseEvent, conv->name, smile);
+}
+
+static std::map<std::pair<PurpleConversation *, std::string>, gpointer> g_conversationData;
+
+extern "C++" void clearConversationData()
+{
+    g_conversationData.clear();
+    g_loggedMessages.clear();
+    g_loggingPreferred = true;
+    g_logTotalSize     = 1;
+}
+
+extern "C++" void setLoggingPreferred(bool logging)
+{
+    g_loggingPreferred = logging;
+}
+
+extern "C++" std::vector<std::string> takeLoggedMessages()
+{
+    std::vector<std::string> logged;
+    logged.swap(g_loggedMessages);
+    return logged;
+}
+
+void purple_conversation_set_data(PurpleConversation *conv, const char *key, gpointer data)
+{
+    g_conversationData[std::make_pair(conv, std::string(key))] = data;
+}
+
+gpointer purple_conversation_get_data(PurpleConversation *conv, const char *key)
+{
+    auto it = g_conversationData.find(std::make_pair(conv, std::string(key)));
+    return (it != g_conversationData.end()) ? it->second : NULL;
+}
+
+void purple_conversation_update(PurpleConversation *conv, PurpleConvUpdateType type)
+{
+}
+
+// References taken beyond the one each image comes with, as the plugin holds them
+static std::map<int, int> g_imageRefs;
+
+void purple_imgstore_unref_by_id(int id)
+{
+    g_imageRefs[id]--;
+}
+
+void purple_imgstore_ref_by_id(int id)
+{
+    g_imageRefs[id]++;
+}
+
+int getImageRefs(int id)
+{
+    auto it = g_imageRefs.find(id);
+    return (it != g_imageRefs.end()) ? it->second : 0;
+}
+
+void *purple_notify_uri(void *handle, const char *uri)
+{
+    EVENT(NotifyUriEvent, uri);
+    return NULL;
+}
+
+PurpleNotifyUserInfo *purple_notify_user_info_new(void)
+{
+    return NULL;
+}
+
+GList *purple_notify_user_info_get_entries(PurpleNotifyUserInfo *user_info)
+{
+    return NULL;
+}
+
+void purple_notify_user_info_add_section_break(PurpleNotifyUserInfo *user_info)
+{
+}
+
+void purple_notify_user_info_add_pair(PurpleNotifyUserInfo *user_info, const char *label, const char *value)
+{
+}
+
+void *purple_notify_userinfo(PurpleConnection *gc, const char *who,
+						   PurpleNotifyUserInfo *user_info, PurpleNotifyCloseCallback cb,
+						   gpointer user_data)
+{
+    return NULL;
+}
+
+gboolean purple_plugin_register(PurplePlugin *plugin)
+{
+    // TODO maybe event
+    g_plugin = plugin;
+    return TRUE;
+}
+
+const char *purple_primitive_get_id_from_type(PurpleStatusPrimitive type)
+{
+    return (const char *)type;
+}
+
+void purple_prpl_got_user_status(PurpleAccount *account, const char *name,
+							   const char *status_id, ...)
+{
+    PurpleStatusPrimitive type = (PurpleStatusPrimitive)(unsigned long)status_id;
+    EVENT(UserStatusEvent, account, name, type);
+}
+
+gboolean purple_prefs_exists(const char *name)
+{
+    return FALSE;
+}
+
+int purple_prefs_get_int(const char *name)
+{
+    return 0;
+}
+
+gboolean purple_prefs_get_bool(const char *name)
+{
+    if (!strcmp(name, "/purple/logging/log_ims") || !strcmp(name, "/purple/logging/log_chats"))
+        return g_loggingPreferred;
+    return FALSE;
+}
+
+PurpleIdleUiOps *purple_idle_get_ui_ops(void)
+{
+    return NULL;
+}
+
+void purple_conversation_clear_message_history(PurpleConversation *conv)
+{
+}
+
+void *purple_request_action(void *handle, const char *title, const char *primary,
+	const char *secondary, int default_action, PurpleAccount *account,
+	const char *who, PurpleConversation *conv, void *user_data,
+	size_t action_count, ...)
+{
+    std::vector<std::string> buttons;
+    std::vector<PurpleRequestActionCb> callbacks;
+    va_list ap;
+    va_start(ap, action_count);
+    for (size_t i = 0; i < action_count; i++) {
+        buttons.emplace_back(va_arg(ap, char*));
+        callbacks.push_back(va_arg(ap, PurpleRequestActionCb));
+    }
+    va_end(ap);
+
+    EVENT(RequestActionEvent, handle, title, primary, secondary, account, who, conv, user_data, buttons, callbacks);
+    return NULL;
+}
+
+static bool g_requestInputSupported = true;
+
+extern "C++" void setRequestInputSupported(bool supported)
+{
+    g_requestInputSupported = supported;
+}
+
+void *purple_request_input(void *handle, const char *title, const char *primary,
+	const char *secondary, const char *default_value, gboolean multiline,
+	gboolean masked, gchar *hint,
+	const char *ok_text, GCallback ok_cb,
+	const char *cancel_text, GCallback cancel_cb,
+	PurpleAccount *account, const char *who, PurpleConversation *conv,
+	void *user_data)
+{
+    // No request ui-ops: libpurple asks nothing and returns NULL
+    if (!g_requestInputSupported)
+        return NULL;
+    EVENT(RequestInputEvent, handle, title, primary, secondary, default_value, ok_text, ok_cb,
+          cancel_text, cancel_cb, account, who, conv, user_data);
+
+    // Just return some non-NULL pointer
+    return &g_accounts;
+}
+
+PurpleRoomlist *purple_roomlist_new(PurpleAccount *account)
+{
+    PurpleRoomlist *roomlist = new PurpleRoomlist;
+    roomlist->ref = 1;
+    roomlist->ui_data = new RoomlistData;
+    return roomlist;
+}
+
+void purple_roomlist_set_in_progress(PurpleRoomlist *list, gboolean in_progress)
+{
+    EVENT(RoomlistInProgressEvent, list, in_progress);
+}
+
+void purple_roomlist_ref(PurpleRoomlist *list)
+{
+    list->ref++;
+}
+
+void purple_roomlist_unref(PurpleRoomlist *list)
+{
+    ASSERT_NE(0u, list->ref);
+    list->ref--;
+    if (list->ref == 0) {
+        delete static_cast<RoomlistData *>(list->ui_data);
+        delete list;
+    }
+}
+
+PurpleRoomlistField *purple_roomlist_field_new(PurpleRoomlistFieldType type,
+                                           const gchar *label, const gchar *name,
+                                           gboolean hidden)
+{
+    PurpleRoomlistField *field = new PurpleRoomlistField;
+    field->type = type;
+    field->name = strdup(name);
+    return field;
+}
+
+void purple_roomlist_set_fields(PurpleRoomlist *list, GList *fields)
+{
+    RoomlistData *fieldStore = static_cast<RoomlistData *>(list->ui_data);
+    for (GList *field = fields; field; field = g_list_next(field)) {
+        PurpleRoomlistField *f = static_cast<PurpleRoomlistField *>(field->data);
+        fieldStore->emplace_back(f->type, f->name);
+        free(f->name);
+        delete f;
+    }
+    g_list_free(fields);
+}
+
+struct RealRoom {
+    std::vector<std::string> fieldValues;
+    GList firstField = {NULL, NULL, NULL};
+};
+
+PurpleRoomlistRoom *purple_roomlist_room_new(PurpleRoomlistRoomType type, const gchar *name,
+                                         PurpleRoomlistRoom *parent)
+{
+    PurpleRoomlistRoom *room = reinterpret_cast<PurpleRoomlistRoom *>(new RealRoom);
+    return room;
+}
+
+void purple_roomlist_room_add_field(PurpleRoomlist *list, PurpleRoomlistRoom *notRoom, gconstpointer field)
+{
+    RoomlistData *fieldList = static_cast<RoomlistData *>(list->ui_data);
+    RealRoom *room = reinterpret_cast<RealRoom *>(notRoom);
+    size_t index = room->fieldValues.size();
+    switch (fieldList->at(index).first) {
+        case PURPLE_ROOMLIST_FIELD_BOOL:
+            room->fieldValues.push_back(field ? "true" : "false");
+            break;
+        case PURPLE_ROOMLIST_FIELD_INT:
+            room->fieldValues.push_back(std::to_string(GPOINTER_TO_INT(field)));
+            break;
+        case PURPLE_ROOMLIST_FIELD_STRING:
+            room->fieldValues.push_back(static_cast<const char *>(field));
+            break;
+    }
+}
+
+GList * purple_roomlist_room_get_fields(PurpleRoomlistRoom *notRoom)
+{
+    RealRoom *room = reinterpret_cast<RealRoom *>(notRoom);
+    if (!room->fieldValues.empty())
+        room->firstField.data = const_cast<char *>(room->fieldValues[0].c_str());
+    return &room->firstField;
+}
+
+void purple_roomlist_room_add(PurpleRoomlist *list, PurpleRoomlistRoom *notRoom)
+{
+    RealRoom *room = reinterpret_cast<RealRoom *>(notRoom);
+    EVENT(RoomlistAddRoomEvent, list, room->fieldValues);
+    delete room;
+}
+
+void purple_serv_got_join_chat_failed(PurpleConnection *gc, GHashTable *data)
+{
+    // TODO event
+}
+
+PurpleStatusType *purple_status_type_new_full(PurpleStatusPrimitive primitive,
+										  const char *id, const char *name,
+										  gboolean saveable,
+										  gboolean user_settable,
+										  gboolean independent)
+{
+    return NULL;
+}
+
+const char *purple_user_dir(void)
+{
+    return "purple_user_dir";
+}
+
+PurpleXfer *purple_xfer_new(PurpleAccount *account,
+								PurpleXferType type, const char *who)
+{
+    PurpleXfer *xfer = new PurpleXfer;
+    xfer->account = account;
+    xfer->type = type;
+    xfer->who = strdup(who);
+    xfer->ref = 1;
+    xfer->filename = NULL;
+    xfer->local_filename = NULL;
+    xfer->status = PURPLE_XFER_STATUS_UNKNOWN;
+    xfer->size = 0;
+    memset(&xfer->ops, 0, sizeof(xfer->ops));
+    return xfer;
+}
+
+void purple_xfer_ref(PurpleXfer *xfer)
+{
+    xfer->ref++;
+}
+
+void purple_xfer_unref(PurpleXfer *xfer)
+{
+    if (--xfer->ref == 0) {
+        free(xfer->who);
+        free(xfer->filename);
+        free(xfer->local_filename);
+        delete xfer;
+    }
+}
+
+void purple_xfer_request(PurpleXfer *xfer)
+{
+    EVENT(XferRequestEvent, purple_xfer_get_type(xfer), xfer->who, purple_xfer_get_filename(xfer), xfer);
+}
+
+std::map<std::string, size_t> fakeFiles;
+
+void setFakeFileSize(const char *path, size_t size)
+{
+    fakeFiles[path] = size;
+}
+
+void clearFakeFiles()
+{
+    fakeFiles.clear();
+}
+
+void purple_xfer_request_accepted(PurpleXfer *xfer, const char *filename)
+{
+    EVENT(XferAcceptedEvent, xfer, filename);
+    xfer->status = PURPLE_XFER_STATUS_ACCEPTED;
+    xfer->local_filename = strdup(filename);
+    if (xfer->type == PURPLE_XFER_SEND)
+        xfer->size = fakeFiles.at(filename);
+    if (xfer->ops.init)
+        xfer->ops.init(xfer);
+}
+
+void purple_xfer_set_init_fnc(PurpleXfer *xfer, void (*fnc)(PurpleXfer *))
+{
+    xfer->ops.init = fnc;
+}
+
+void purple_xfer_set_cancel_send_fnc(PurpleXfer *xfer, void (*fnc)(PurpleXfer *))
+{
+    xfer->ops.cancel_send = fnc;
+}
+
+void purple_xfer_set_cancel_recv_fnc(PurpleXfer *xfer, void (*fnc)(PurpleXfer *))
+{
+    xfer->ops.cancel_recv = fnc;
+}
+
+void purple_xfer_set_end_fnc(PurpleXfer *xfer, void (*fnc)(PurpleXfer *))
+{
+    xfer->ops.end = fnc;
+}
+
+const char *purple_xfer_get_remote_user(const PurpleXfer *xfer)
+{
+    return xfer->who;
+}
+
+const char *purple_xfer_get_filename(const PurpleXfer *xfer)
+{
+    return xfer->filename;
+}
+
+const char *purple_xfer_get_local_filename(const PurpleXfer *xfer)
+{
+    return xfer->local_filename;
+}
+
+void purple_xfer_set_filename(PurpleXfer *xfer, const char *filename)
+{
+    xfer->filename = strdup(filename);
+}
+
+PurpleAccount *purple_xfer_get_account(const PurpleXfer *xfer)
+{
+    return xfer->account;
+}
+
+void purple_xfer_set_size(PurpleXfer *xfer, size_t size)
+{
+    xfer->size = size;
+}
+
+void purple_xfer_start(PurpleXfer *xfer, int fd, const char *ip,
+					 unsigned int port)
+{
+    EVENT(XferStartEvent, xfer->local_filename);
+    xfer->status = PURPLE_XFER_STATUS_STARTED;
+}
+
+void purple_xfer_cancel_local(PurpleXfer *xfer)
+{
+    EVENT(XferLocalCancelEvent, xfer->local_filename);
+    xfer->status = PURPLE_XFER_STATUS_CANCEL_LOCAL;
+    if ((xfer->type == PURPLE_XFER_SEND) && xfer->ops.cancel_send)
+        xfer->ops.cancel_send(xfer);
+    if ((xfer->type == PURPLE_XFER_RECEIVE) && xfer->ops.cancel_recv)
+        xfer->ops.cancel_recv(xfer);
+
+    purple_xfer_unref(xfer);
+}
+
+gboolean purple_xfer_is_canceled(const PurpleXfer *xfer)
+{
+    return (xfer->status == PURPLE_XFER_STATUS_CANCEL_LOCAL) ||
+           (xfer->status == PURPLE_XFER_STATUS_CANCEL_REMOTE);
+}
+
+void purple_xfer_cancel_remote(PurpleXfer *xfer)
+{
+    EVENT(XferRemoteCancelEvent, xfer->local_filename);
+    xfer->status = PURPLE_XFER_STATUS_CANCEL_REMOTE;
+    if ((xfer->type == PURPLE_XFER_SEND) && xfer->ops.cancel_send)
+        xfer->ops.cancel_send(xfer);
+    if ((xfer->type == PURPLE_XFER_RECEIVE) && xfer->ops.cancel_recv)
+        xfer->ops.cancel_recv(xfer);
+    purple_xfer_unref(xfer);
+}
+
+void purple_xfer_error(PurpleXferType type, PurpleAccount *account, const char *who, const char *msg)
+{
+    purple_notify_error(account, "Xfer error", who, msg);
+}
+
+PurpleXferType purple_xfer_get_type(const PurpleXfer *xfer)
+{
+    return xfer->type;
+}
+
+void purple_xfer_set_bytes_sent(PurpleXfer *xfer, size_t bytes_sent)
+{
+    xfer->bytes_sent = bytes_sent;
+}
+
+size_t purple_xfer_get_bytes_sent(const PurpleXfer *xfer)
+{
+    return xfer->bytes_sent;
+}
+
+void purple_xfer_set_completed(PurpleXfer *xfer, gboolean completed)
+{
+    EVENT(XferCompletedEvent, xfer->local_filename, completed, xfer->bytes_sent);
+}
+
+void purple_xfer_update_progress(PurpleXfer *xfer)
+{
+    EVENT(XferProgressEvent, xfer->local_filename, xfer->bytes_sent);
+}
+
+void purple_xfer_end(PurpleXfer *xfer)
+{
+    EVENT(XferEndEvent, xfer->local_filename);
+    if (xfer->ops.end)
+        xfer->ops.end(xfer);
+    purple_xfer_unref(xfer);
+}
+
+PurpleXferStatusType purple_xfer_get_status(const PurpleXfer *xfer)
+{
+    return xfer->status;
+}
+
+size_t purple_xfer_get_size(const PurpleXfer *xfer)
+{
+    return xfer->size;
+}
+
+gboolean
+purple_xfer_write_file(PurpleXfer *xfer, const guchar *buffer, gsize size)
+{
+    if (xfer->status != PURPLE_XFER_STATUS_STARTED) {
+        purple_debug_misc("purple_xfer_write_file", "write_file requires a transfer in progress\n");
+        purple_xfer_cancel_local(xfer);
+        return FALSE;
+    }
+    EXPECT_LE(xfer->bytes_sent + size, xfer->size);
+    xfer->bytes_sent += size;
+    EVENT(XferWriteFileEvent, xfer->local_filename, buffer, size);
+    return TRUE;
+}
+
+void serv_got_chat_in(PurpleConnection *g, int id, const char *who,
+					  PurpleMessageFlags flags, const char *message, time_t mtime)
+{
+    EVENT(ServGotChatEvent, g, id, who, message, flags, mtime);
+}
+
+void serv_got_im(PurpleConnection *gc, const char *who, const char *msg,
+				 PurpleMessageFlags flags, time_t mtime)
+{
+    if (purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM, who, gc->account) == NULL) {
+        purple_conversation_new_impl(PURPLE_CONV_TYPE_IM, gc->account, who);
+    }
+    EVENT(ServGotImEvent, gc, who, msg, flags, mtime);
+}
+
+PurpleConversation *serv_got_joined_chat(PurpleConnection *gc,
+									   int id, const char *name)
+{
+    PurpleConversation *conv = purple_conversation_new_impl(PURPLE_CONV_TYPE_CHAT, gc->account, name);
+    purple_conversation_get_chat_data(conv)->id = id;
+
+    PurpleChat *chat = purple_blist_find_chat(gc->account, name);
+    if (chat && chat->alias)
+        conv->title = strdup(chat->alias);
+
+    EVENT(ServGotJoinedChatEvent, gc, id, name, conv->title ? conv->title : name);
+    return conv;
+}
+
+void serv_got_typing(PurpleConnection *gc, const char *name, int timeout,
+					 PurpleTypingState state)
+{
+    // TODO event
+}
+
+void serv_got_typing_stopped(PurpleConnection *gc, const char *name)
+{
+    // TODO event
+}
+
+void purple_conversation_present(PurpleConversation *conv)
+{
+    EVENT(PresentConversationEvent, conv->name);
+}
+
+void purple_conv_chat_add_user(PurpleConvChat *chat, const char *user,
+							 const char *extra_msg, PurpleConvChatBuddyFlags flags,
+							 gboolean new_arrival)
+{
+    EVENT(ChatAddUserEvent, chat->conv->name, user, extra_msg ? extra_msg : "", flags, new_arrival);
+}
+
+void purple_conv_chat_add_users(PurpleConvChat *chat, GList *users, GList *extra_msgs,
+							  GList *flags, gboolean new_arrivals)
+{
+    GList *user, *flag;
+    for (user = users, flag = flags; user; user = user->next, flag = flag->next)
+        purple_conv_chat_add_user(chat, (const char *)user->data, NULL,
+                                  (PurpleConvChatBuddyFlags)GPOINTER_TO_INT(flag->data), new_arrivals);
+}
+
+void purple_conv_chat_clear_users(PurpleConvChat *chat)
+{
+    EVENT(ChatClearUsersEvent, chat->conv->name);
+}
+
+PurpleBlistNode *purple_blist_get_root(void)
+{
+    return &root;
+}
+
+PurpleBlistNode *purple_blist_node_get_sibling_next(PurpleBlistNode *node)
+{
+    return node->next;
+}
+
+PurpleBlistNodeType purple_blist_node_get_type(PurpleBlistNode *node)
+{
+    return node->type;
+}
+
+GHashTable *purple_chat_get_components(PurpleChat *chat)
+{
+    return chat->components;
+}
+
+PurpleBlistNode *purple_blist_node_get_first_child(PurpleBlistNode *node)
+{
+    return node->child;
+}
+
+void purple_blist_node_set_string(PurpleBlistNode *node, const char *key,
+		const char *value)
+{
+    g_hash_table_insert(node->settings, (void *)key, g_strdup(value));
+}
+
+const char *purple_blist_node_get_string(PurpleBlistNode *node, const char *key)
+{
+    return static_cast<const char *>(g_hash_table_lookup(node->settings, key));
+}
+
+void purple_blist_node_remove_setting(PurpleBlistNode *node, const char *key)
+{
+    g_hash_table_remove(node->settings, key);
+}
+
+static char groupName[] = "Group";
+
+PurpleGroup standardPurpleGroup = {
+    .node = PurpleBlistNode(),
+	.name = groupName,
+	.totalsize = 0,
+	.currentsize = 0,
+	.online = 0
+};
+
+static std::vector<PurpleGroup *> g_groups;
+
+PurpleGroup *purple_find_group(const char *name)
+{
+    if (!strcmp(name, standardPurpleGroup.name))
+        return &standardPurpleGroup;
+    for (PurpleGroup *group: g_groups)
+        if (!strcmp(name, group->name))
+            return group;
+    return NULL;
+}
+
+PurpleGroup *purple_group_new(const char *name)
+{
+    PurpleGroup *group = new PurpleGroup();
+    newNode(group->node, PURPLE_BLIST_GROUP_NODE);
+    group->name = strdup(name);
+    return group;
+}
+
+void purple_blist_add_group(PurpleGroup *group, PurpleBlistNode *node)
+{
+    addNode(group->node);
+    g_groups.push_back(group);
+}
+
+void purple_blist_rename_group(PurpleGroup *group, const char *name)
+{
+    free(group->name);
+    group->name = strdup(name);
+}
+
+// Groups last for the run of the test case, like the rest of the buddy list
+void clearGroups()
+{
+    for (PurpleGroup *group: g_groups) {
+        removeNode(group->node);
+        g_hash_table_destroy(group->node.settings);
+        free(group->name);
+        delete group;
+    }
+    g_groups.clear();
+}
+
+void purple_blist_node_set_flags(PurpleBlistNode *node, PurpleBlistNodeFlags flags)
+{
+    node->flags = flags;
+}
+
+PurpleBlistNodeFlags purple_blist_node_get_flags(PurpleBlistNode *node)
+{
+    return node->flags;
+}
+
+const char *purple_group_get_name(PurpleGroup *group)
+{
+    return group->name;
+}
+
+struct _PurpleStoredImage {
+    std::vector<uint8_t> data;
+};
+
+std::vector<std::unique_ptr<PurpleStoredImage>> imageStore;
+
+guint8 *arrayDup(gpointer data, size_t size)
+{
+    guint8 *result = (guint8 *)g_malloc(size);
+    memmove(result, data, size);
+    return result;
+}
+
+int purple_imgstore_add_with_id(gpointer data, size_t size, const char *filename)
+{
+    imageStore.push_back(std::make_unique<PurpleStoredImage>());
+    imageStore.back()->data = std::vector<uint8_t>(size);
+    memmove(imageStore.back()->data.data(), data, size);
+    g_free(data);
+    return imageStore.size();
+}
+
+int getLastImgstoreId()
+{
+    return imageStore.size();
+}
+
+// GdkPixbuf as the plugin finds it at run time, telling formats apart by their first bytes
+
+static std::vector<std::string> g_imageLoaders;
+
+// Declared in C++, being called from it only, while all about here is C
+extern "C++" void setImageLoaders(std::initializer_list<std::string> formats)
+{
+    g_imageLoaders = formats;
+}
+
+static bool isImageFormat(const std::string &data, const std::string &format)
+{
+    if (format == "webp")
+        return (data.size() >= 12) && !data.compare(0, 4, "RIFF") && !data.compare(8, 4, "WEBP");
+    if (format == "webm")
+        return !data.compare(0, 4, "\x1A\x45\xDF\xA3");
+    if (format == "tgs")
+        return !data.compare(0, 2, "\x1F\x8B");
+    return false;
+}
+
+extern "C" {
+
+// Returns a GdkPixbufFormat, which the plugin does not look into, if a loader takes the file
+void *gdk_pixbuf_get_file_info(const gchar *filename, gint *width, gint *height)
+{
+    static int format;
+    gchar     *data = NULL;
+    gsize      size = 0;
+    if (!g_file_get_contents(filename, &data, &size, NULL))
+        return NULL;
+    std::string contents(data, size);
+    g_free(data);
+
+    for (const std::string &loader: g_imageLoaders)
+        if (isImageFormat(contents, loader)) {
+            *width = *height = 100;
+            return &format;
+        }
+    return NULL;
+}
+
+}
+
+PurpleStoredImage *purple_imgstore_find_by_id(int id)
+{
+    if ((id >= 1) && ((unsigned)id <= imageStore.size()))
+        return imageStore[id-1].get();
+    else
+        return NULL;
+}
+
+gconstpointer purple_imgstore_get_data(PurpleStoredImage *img)
+{
+    return img->data.data();
+}
+
+size_t purple_imgstore_get_size(PurpleStoredImage *img)
+{
+    return img->data.size();
+}
+
+gchar *purple_markup_escape_text(const gchar *text, gssize length)
+{
+    std::string s(text, length);
+    size_t pos;
+    while ((pos = s.find('<')) != std::string::npos)
+        s.replace(pos, 1, "&lt;");
+    while ((pos = s.find('>')) != std::string::npos)
+        s.replace(pos, 1, "&gt;");
+    return g_strdup(s.c_str());
+}
+
+char *purple_unescape_html(const char *html)
+{
+    std::string s(html);
+    size_t pos;
+    while ((pos = s.find("&lt;")) != std::string::npos)
+        s.replace(pos, 4, "<");
+    while ((pos = s.find("&gt;")) != std::string::npos)
+        s.replace(pos, 4, ">");
+    while ((pos = s.find("&quot;")) != std::string::npos)
+        s.replace(pos, 6, "\"");
+    for (pos = 0; (pos = s.find("&amp;", pos)) != std::string::npos; pos++)
+        s.replace(pos, 5, "&");
+    return g_strdup(s.c_str());
+}
+
+char *purple_markup_strip_html(const char *str)
+{
+    std::string s(str);
+    size_t pos;
+    while ((pos = s.find("<")) != std::string::npos) {
+        size_t tagend = s.find(">", pos);
+        if (tagend != std::string::npos)
+            s.erase(pos, tagend-pos+1);
+    }
+    return g_strdup(s.c_str());
+}
+
+PurpleProxyInfo *purple_proxy_get_setup(PurpleAccount *account)
+{
+    return account->proxy_info;
+}
+
+PurpleProxyType purple_proxy_info_get_type(const PurpleProxyInfo *info)
+{
+    return info->type;
+}
+
+const char *purple_proxy_info_get_host(const PurpleProxyInfo *info)
+{
+    return info->host;
+}
+
+int purple_proxy_info_get_port(const PurpleProxyInfo *info)
+{
+    return info->port;
+}
+
+const char *purple_proxy_info_get_username(const PurpleProxyInfo *info)
+{
+    return info->username;
+}
+
+const char *purple_proxy_info_get_password(const PurpleProxyInfo *info)
+{
+    return info->password;
+}
+
+PurpleRequestFields *purple_request_fields_new(void)
+{
+    return NULL;
+}
+
+PurpleRequestFieldGroup *purple_request_field_group_new(const char *title)
+{
+    return NULL;
+}
+
+PurpleRequestField *purple_request_field_string_new(const char *id,
+												const char *text,
+												const char *default_value,
+												gboolean multiline)
+{
+    return NULL;
+}
+
+void purple_request_field_set_type_hint(PurpleRequestField *field,
+									  const char *type_hint)
+{
+}
+
+void purple_request_field_string_set_masked(PurpleRequestField *field,
+										  gboolean masked)
+{
+}
+
+void purple_request_field_group_add_field(PurpleRequestFieldGroup *group,
+										PurpleRequestField *field)
+{
+}
+
+void purple_request_fields_add_group(PurpleRequestFields *fields,
+								   PurpleRequestFieldGroup *group)
+{
+}
+
+// What the next dialogs asking for text are answered with, field by field, in turn; given up if none
+static std::vector<std::map<std::string, std::string>> g_requestAnswers;
+static const std::map<std::string, std::string>       *g_requestAnswer = nullptr;
+
+extern "C++" void setRequestAnswers(std::vector<std::map<std::string, std::string>> answers)
+{
+    g_requestAnswers = std::move(answers);
+}
+
+extern "C++" size_t getRequestAnswersLeft()
+{
+    return g_requestAnswers.size();
+}
+
+// The dialog answered, if an answer is waiting
+static bool answerRequest(GCallback ok_cb, GCallback cancel_cb, void *user_data)
+{
+    if (g_requestAnswers.empty() || !ok_cb) {
+        if (cancel_cb)
+            reinterpret_cast<PurpleRequestFieldsCb>(cancel_cb)(user_data, NULL);
+        return false;
+    }
+    std::map<std::string, std::string> answer = std::move(g_requestAnswers.front());
+    g_requestAnswers.erase(g_requestAnswers.begin());
+    g_requestAnswer = &answer;
+    reinterpret_cast<PurpleRequestFieldsCb>(ok_cb)(user_data, NULL);
+    g_requestAnswer = nullptr;
+    return true;
+}
+
+const char *purple_request_fields_get_string(const PurpleRequestFields *fields,
+										   const char *id)
+{
+    auto it = g_requestAnswer ? g_requestAnswer->find(id) : decltype(g_requestAnswer->end())();
+    return (g_requestAnswer && (it != g_requestAnswer->end())) ? it->second.c_str() : "";
+}
+
+gboolean purple_request_fields_get_bool(const PurpleRequestFields *fields, const char *id)
+{
+    return g_requestAnswer && g_requestAnswer->count(id) && (g_requestAnswer->at(id) == "1");
+}
+
+PurpleRequestField *purple_request_field_bool_new(const char *id, const char *text, gboolean default_value)
+{
+    return NULL;
+}
+
+void purple_request_field_set_required(PurpleRequestField *field, gboolean required)
+{
+}
+
+void purple_account_request_password(PurpleAccount *account, GCallback ok_cb, GCallback cancel_cb,
+                                     void *user_data)
+{
+    EVENT(RequestPasswordEvent, account);
+    answerRequest(ok_cb, cancel_cb, user_data);
+}
+
+// No buddy list window to draw anew
+PurpleBlistUiOps *purple_blist_get_ui_ops(void)
+{
+    return NULL;
+}
+
+PurpleBuddyList *purple_get_blist(void)
+{
+    return NULL;
+}
+
+// No logs, as the tests' conversations are never filled from them, there being no Pidgin
+GList *purple_log_get_logs(PurpleLogType type, const char *name, PurpleAccount *account)
+{
+    return NULL;
+}
+
+// Logged already, unless a test says not
+extern "C++" void setLogTotalSize(int size)
+{
+    g_logTotalSize = size;
+}
+
+int purple_log_get_total_size(PurpleLogType type, const char *name, PurpleAccount *account)
+{
+    return g_logTotalSize;
+}
+
+// As Pidgin's file loggers have it, if a test makes any
+char *purple_log_get_log_dir(PurpleLogType type, const char *name, PurpleAccount *account)
+{
+    std::string base = name + std::string(type == PURPLE_LOG_CHAT ? ".chat" : "");
+    return g_build_filename(purple_user_dir(), "logs", "telegram", purple_account_get_username(account), base.c_str(),
+                            NULL);
+}
+
+char *purple_log_read(PurpleLog *log, PurpleLogReadFlags *flags)
+{
+    return g_strdup("");
+}
+
+PurpleLog *purple_log_new(PurpleLogType type, const char *name, PurpleAccount *account,
+                          PurpleConversation *conv, time_t time, const struct tm *tm)
+{
+    PurpleLog *log = g_new0(PurpleLog, 1);
+    log->type    = type;
+    log->name    = g_strdup(name);
+    log->account = account;
+    log->conv    = conv;
+    log->time    = time;
+    return log;
+}
+
+void purple_log_write(PurpleLog *log, PurpleMessageFlags type, const char *from, time_t time, const char *message)
+{
+    g_loggedMessages.push_back(message);
+}
+
+void purple_log_free(PurpleLog *log)
+{
+    if (log) {
+        g_free(log->name);
+        g_free(log);
+    }
+}
+
+PurpleRequestField *purple_request_field_choice_new(const char *id, const char *text, int default_value)
+{
+    return NULL;
+}
+
+void purple_request_field_choice_add(PurpleRequestField *field, const char *label)
+{
+}
+
+// As answered, by its index
+int purple_request_fields_get_choice(const PurpleRequestFields *fields, const char *id)
+{
+    auto it = g_requestAnswer ? g_requestAnswer->find(id) : decltype(g_requestAnswer->end())();
+    return (g_requestAnswer && (it != g_requestAnswer->end())) ? atoi(it->second.c_str()) : -1;
+}
+
+// The list only, telling no server
+gboolean purple_privacy_deny_add(PurpleAccount *account, const char *who, gboolean local_only)
+{
+    for (GSList *item = account->deny; item; item = item->next)
+        if (!strcmp(static_cast<const char *>(item->data), who))
+            return FALSE;
+    account->deny = g_slist_append(account->deny, g_strdup(who));
+    return TRUE;
+}
+
+gboolean purple_privacy_deny_remove(PurpleAccount *account, const char *who, gboolean local_only)
+{
+    for (GSList *item = account->deny; item; item = item->next)
+        if (!strcmp(static_cast<const char *>(item->data), who)) {
+            g_free(item->data);
+            account->deny = g_slist_delete_link(account->deny, item);
+            return TRUE;
+        }
+    return FALSE;
+}
+
+// The list of the request of fields being made, its items with their data, and the one chosen
+namespace {
+struct ListField {
+    std::vector<std::pair<std::string, void *>> items;
+    GList                                      *selected    = nullptr;
+    bool                                        multiSelect = false;
+};
+}
+static ListField *g_listField       = nullptr;
+static std::vector<int> g_requestListChoices;
+
+extern "C++" void setRequestListChoice(int index)
+{
+    g_requestListChoices = {index};
+}
+
+extern "C++" void setRequestListChoices(std::vector<int> indices)
+{
+    g_requestListChoices = std::move(indices);
+}
+
+void *purple_request_fields(void *handle, const char *title, const char *primary,
+	const char *secondary, PurpleRequestFields *fields,
+	const char *ok_text, GCallback ok_cb,
+	const char *cancel_text, GCallback cancel_cb,
+	PurpleAccount *account, const char *who, PurpleConversation *conv,
+	void *user_data)
+{
+    ListField       *list    = g_listField;
+    std::vector<int> choices = std::move(g_requestListChoices);
+    g_listField = nullptr;
+    g_requestListChoices.clear();
+    // Several chosen only where the list lets them be
+    if (list && (choices.size() > 1) && !list->multiSelect) {
+        ADD_FAILURE() << "Several choices from a list of single choice";
+        choices.resize(1);
+    }
+    if (list)
+        for (int choice: choices)
+            if ((choice >= 0) && (static_cast<size_t>(choice) < list->items.size()))
+                list->selected = g_list_append(list->selected, const_cast<char *>(list->items[choice].first.c_str()));
+    if (!list)
+        answerRequest(ok_cb, cancel_cb, user_data);
+    else if (ok_cb && list->selected) {
+        g_listField    = list;
+        reinterpret_cast<PurpleRequestFieldsCb>(ok_cb)(user_data, fields);
+        g_listField    = nullptr;
+    } else if (cancel_cb)
+        // Given up at once, as the dialog is not shown, so that what it holds is let go
+        reinterpret_cast<PurpleRequestFieldsCb>(cancel_cb)(user_data, fields);
+    if (list)
+        g_list_free(list->selected);
+    delete list;
+    return NULL;
+}
+
+PurpleRequestField *purple_request_field_list_new(const char *id, const char *text)
+{
+    delete g_listField;
+    g_listField = new ListField;
+    return reinterpret_cast<PurpleRequestField *>(g_listField);
+}
+
+void purple_request_field_list_add(PurpleRequestField *field, const char *item, void *data)
+{
+    // As libpurple, which takes no item without data
+    if (field && item && data)
+        reinterpret_cast<ListField *>(field)->items.emplace_back(item, data);
+}
+
+void purple_request_field_list_set_multi_select(PurpleRequestField *field, gboolean multi_select)
+{
+    if (field)
+        reinterpret_cast<ListField *>(field)->multiSelect = multi_select;
+}
+
+GList *purple_request_field_list_get_selected(const PurpleRequestField *field)
+{
+    return field ? reinterpret_cast<const ListField *>(field)->selected : NULL;
+}
+
+void *purple_request_field_list_get_data(const PurpleRequestField *field, const char *text)
+{
+    if (field && text)
+        for (const auto &item: reinterpret_cast<const ListField *>(field)->items)
+            if (item.first == text)
+                return item.second;
+    return NULL;
+}
+
+PurpleRequestField *purple_request_fields_get_field(const PurpleRequestFields *fields, const char *id)
+{
+    // The only field there is, the list, while its request is answered
+    return reinterpret_cast<PurpleRequestField *>(g_listField);
+}
+
+GList *purple_get_chats(void)
+{
+    // libpurple's own list, not to be freed by the caller: made anew each time
+    static GList *chats = NULL;
+    g_list_free(chats);
+    chats = NULL;
+    for (GList *item = purple_get_conversations(); item; item = item->next)
+        if (purple_conversation_get_type(static_cast<PurpleConversation *>(item->data)) == PURPLE_CONV_TYPE_CHAT)
+            chats = g_list_append(chats, item->data);
+    return chats;
+}
+
+PurplePlugin *purple_connection_get_prpl(const PurpleConnection *gc)
+{
+    return NULL;
+}
+
+void serv_send_file(PurpleConnection *gc, const char *who, const char *file)
+{
+}
+
+void purple_conv_im_send(PurpleConvIm *im, const char *message)
+{
+    EVENT(ConversationSendEvent, PURPLE_CONV_TYPE_IM, im->conv->account, im->conv->name, message);
+}
+
+void purple_conv_chat_send(PurpleConvChat *chat, const char *message)
+{
+    EVENT(ConversationSendEvent, PURPLE_CONV_TYPE_CHAT, chat->conv->account, chat->conv->name, message);
+}
+
+PurpleMenuAction *purple_menu_action_new(const char *label, PurpleCallback callback,
+                                     gpointer data, GList *children)
+{
+    PurpleMenuAction *action = new PurpleMenuAction;
+    action->label = strdup(label);
+    action->callback = callback;
+    action->children = NULL;
+    action->data = data;
+    return action;
+}
+
+void purple_menu_action_free(PurpleMenuAction *act)
+{
+    free(act->label);
+    delete act;
+}
+
+PurplePluginAction *purple_plugin_action_new(const char* label, void (*callback)(PurplePluginAction *))
+{
+    return NULL;
+}
+
+PurpleAccountOption *purple_account_option_string_new(const char *text,
+	const char *pref_name, const char *default_value)
+{
+    return NULL;
+}
+
+PurpleAccountOption *purple_account_option_bool_new(const char *text,
+	const char *pref_name, gboolean default_value)
+{
+    return NULL;
+}
+
+PurpleAccountOption *purple_account_option_int_new(const char *text,
+	const char *pref_name, int default_value)
+{
+    return NULL;
+}
+
+PurpleAccountOption *purple_account_option_list_new(const char *text,
+	const char *pref_name, GList *list)
+{
+    for (GList *choice = list; choice; choice = g_list_next(choice)) {
+        PurpleKeyValuePair *kvp = static_cast<PurpleKeyValuePair *>(choice->data);
+        g_free(kvp->key);
+        g_free(kvp->value);
+        g_free(kvp);
+    }
+    g_list_free(list);
+    return NULL;
+}
+
+const char *purple_account_get_string(const PurpleAccount *account,
+									const char *name,
+									const char *default_value)
+{
+    auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
+                           [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(it == g_accounts.end()) << "Unknown account";
+
+    if (it != g_accounts.end()) {
+        auto itOption = it->stringsOptions.find(name);
+        if (itOption != it->stringsOptions.end())
+            return itOption->second.c_str();
+    }
+
+    return default_value;
+}
+
+void purple_account_set_string(PurpleAccount *account, const char *name,
+                                                         const char *value)
+{
+    auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
+                           [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(it == g_accounts.end()) << "Unknown account";
+
+    if (it != g_accounts.end()) {
+        it->stringsOptions[name] = value;
+    }
+}
+
+gboolean purple_account_get_bool(const PurpleAccount *account, const char *name,
+							   gboolean default_value)
+{
+    return *purple_account_get_string(account, name, default_value ? "true" : "");
+}
+
+int purple_account_get_int(const PurpleAccount *account, const char *name, int default_value)
+{
+    return atoi(purple_account_get_string(account, name, std::to_string(default_value).c_str()));
+}
+
+void purple_account_set_bool(PurpleAccount *account, const char *name,
+						   gboolean value)
+{
+    purple_account_set_string(account, name, value ? "true" : "");
+}
+
+void purple_account_remove_setting(PurpleAccount *account, const char *setting)
+{
+    auto it = std::find_if(g_accounts.begin(), g_accounts.end(),
+                           [account](const AccountInfo &info) { return (info.account == account); });
+    EXPECT_FALSE(it == g_accounts.end()) << "Unknown account";
+
+    if (it != g_accounts.end()) {
+        it->stringsOptions.erase(setting);
+    }
+}
+
+char *purple_str_size_to_units(size_t size)
+{
+    return g_strdup("purple_str_size_to_units");
+}
+
+PurpleCmdId purple_cmd_register(const gchar *cmd, const gchar *args, PurpleCmdPriority p, PurpleCmdFlag f,
+                             const gchar *prpl_id, PurpleCmdFunc func, const gchar *helpstr, void *data)
+{
+    g_purpleEvents.addCommand(cmd, func, data);
+    return 0;
+}
+
+PurpleMediaManager *purple_media_manager_get(void)
+{
+    return NULL;
+}
+
+PurpleMediaCaps purple_media_manager_get_ui_caps(PurpleMediaManager *manager)
+{
+    return PURPLE_MEDIA_CAPS_NONE;
+}
+
+GHashTable *uiInfo = NULL;
+static bool uiInfoMissing = false;
+
+GHashTable *purple_core_get_ui_info()
+{
+    if (uiInfoMissing)
+        return NULL;
+    if (!uiInfo)
+        uiInfo = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, NULL);
+
+    return uiInfo;
+}
+
+void setUiName(const char *name)
+{
+    if (!uiInfo)
+        uiInfo = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, NULL);
+
+    static char nameKey[] = "name";
+    g_hash_table_insert(uiInfo, nameKey, const_cast<char *>(name));
+
+}
+
+// As with a libpurple front-end that registers no get_ui_info callback
+void setUiInfoMissing(bool missing)
+{
+    uiInfoMissing = missing;
+}
+
+void *purple_conversations_get_handle()
+{
+    return NULL;
+}
+
+PurpleCore *purple_get_core()
+{
+    return NULL;
+}
+
+PurpleConversationUiOps *purple_conversation_get_ui_ops(const PurpleConversation *conv)
+{
+    return conv->ui_ops;
+}
+
+gboolean purple_conversation_has_focus(PurpleConversation *conv)
+{
+    // A bit like real libpurple
+    return (conv->ui_ops != NULL);
+}
+
+struct SignalHandler {
+    std::string    signal;
+    PurpleCallback func;
+    void          *data;
+};
+static std::vector<SignalHandler> g_signalHandlers;
+
+gulong purple_signal_connect(void *instance, const char *signal,
+	void *handle, PurpleCallback func, void *data)
+{
+    // Once, as the plugin is loaded again for every test
+    for (const SignalHandler &handler: g_signalHandlers)
+        if ((handler.signal == signal) && (handler.func == func))
+            return 0;
+    g_signalHandlers.push_back({signal, func, data});
+    return 0;
+}
+
+void purple_signal_disconnect(void *instance, const char *signal,
+	void *handle, PurpleCallback func)
+{
+    g_signalHandlers.erase(std::remove_if(g_signalHandlers.begin(), g_signalHandlers.end(),
+                                          [signal, func](const SignalHandler &handler) {
+                                              return (handler.signal == signal) && (handler.func == func);
+                                          }),
+                           g_signalHandlers.end());
+}
+
+void *purple_blist_get_handle()
+{
+    static int handle;
+    return &handle;
+}
+
+void emitBlistNodeAdded(PurpleBlistNode *node)
+{
+    for (const SignalHandler &handler: g_signalHandlers)
+        if (handler.signal == "blist-node-added")
+            reinterpret_cast<void (*)(PurpleBlistNode *, void *)>(handler.func)(node, handler.data);
+}
+
+void emitSignal(const char *signal)
+{
+    for (const SignalHandler &handler: g_signalHandlers)
+        if (handler.signal == signal)
+            reinterpret_cast<void (*)(void *)>(handler.func)(handler.data);
+}
+
+bool emitUriHandler(const char *proto, const char *cmd, GHashTable *params)
+{
+    using UriHandler = gboolean (*)(const char *, const char *, GHashTable *, void *);
+    for (const SignalHandler &handler: g_signalHandlers)
+        if ((handler.signal == "uri-handler") &&
+            reinterpret_cast<UriHandler>(handler.func)(proto, cmd, params, handler.data))
+            return true;
+    return false;
+}
+
+// As libpurple's, which Pidgin calls whenever it updates a tab
+void purple_conversation_autoset_title(PurpleConversation *conv)
+{
+    const char *text = NULL;
+    if (conv->type == PURPLE_CONV_TYPE_CHAT) {
+        PurpleChat *chat = purple_blist_find_chat(conv->account, conv->name);
+        if (chat)
+            text = purple_chat_get_name(chat);
+    } else if (conv->type == PURPLE_CONV_TYPE_IM) {
+        PurpleBuddy *buddy = purple_find_buddy(conv->account, conv->name);
+        if (buddy)
+            text = purple_buddy_get_alias(buddy);
+    }
+    purple_conversation_set_title(conv, text ? text : conv->name);
+}
+
+// As libpurple's, which takes the new title at once
+void purple_conversation_set_name(PurpleConversation *conv, const char *name)
+{
+    free(conv->name);
+    conv->name = strdup(name);
+    purple_conversation_autoset_title(conv);
+}
+
+};

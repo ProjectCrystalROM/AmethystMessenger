@@ -1,0 +1,452 @@
+# Build and test every push and every pull request.
+#
+# Setup, Configure, Build, Test and Install are separate steps in every job,
+# so a red mark names which one failed.  "Test" is the mock-libpurple suite in
+# test/ (`run-tests`): no account, no network.  "Install" is `ninja install`
+# into a scratch DESTDIR, which catches a broken install rule.
+# .github/annotate.sh repeats the tail of a failing step's output as an
+# annotation, and the last job ("Summary") lays every job's outcomes out as
+# one table at the top of the run's page.  CodeQL is a workflow of its own
+# (codeql.yml).
+#
+# Every platform supplies its own TDLib, as a package; none is built here.
+# Linux is Alpine edge, whose TDLib follows upstream closely and comes for
+# x86_64, 32-bit x86 and ARM alike (Ubuntu has no TDLib package, Fedora's
+# predates the API this code uses, and Gentoo builds it from source).
+# The BSDs run in a VM on a Linux runner, through cross-platform-actions;
+# every step after the one that boots the VM runs inside it (shell: cpa.sh).
+# OpenBSD is experimental: its failures are shown but do not fail the
+# workflow.  NetBSD (no TDLib package) and DragonFly (a TDLib that predates
+# 1.8.6) are left out until they have one.
+#
+# No -Werror: clang finds an unused private field (transceiver.h) that gcc
+# does not, and the warnings are in the log anyway.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WARNINGS: >-
+    -Wall -Wextra -Wformat=2 -Wformat-signedness
+    -Wno-unused-parameter -Wno-parentheses
+  SANITIZERS: >-
+    -fsanitize=address,undefined -fno-sanitize=vptr,function
+    -fno-sanitize-recover=undefined -fno-omit-frame-pointer
+
+jobs:
+  lint:
+    name: Translations (lint)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # Not every translation needs every accelerator the linter knows of:
+      # it is only told to check those a translation has.
+      - name: Lint accelerators
+        id: lint
+        env:
+          LINTACCEL_IGNORE_MISSING: y
+        run: sh .github/annotate.sh Lint python3 po/lint_accelerators.py
+
+      - name: Record outcome
+        if: always()
+        env:
+          ORDER: 20
+          NAME: Translations (lint)
+          SETUP: success
+          CONFIGURE: n/a
+          BUILD: n/a
+          TEST: ${{ steps.lint.outcome }}
+          INSTALL: n/a
+          VALGRIND: n/a
+          SANITIZE: n/a
+        run: sh .github/record.sh
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: outcome-${{ github.job }}
+          path: outcome.tsv
+
+  # Each job starts an Alpine container for its platform and runs every step
+  # after that inside it (shell: docker exec), as the BSD jobs do with their
+  # VM.  The `container:` key cannot be used: the runner's own JavaScript
+  # actions would have to run in the container too, and it has no 32-bit x86
+  # build of them.
+  linux:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Alpine x86_64 (g++)
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cxx: g++
+            compiler: ''
+            options: ''
+            experimental: false
+            sanitize: true
+            valgrind: true
+          - name: Alpine x86_64 (clang++)
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cxx: clang++
+            compiler: clang
+            options: ''
+            experimental: false
+            sanitize: false
+            valgrind: true
+          - name: Alpine x86_64 (g++, NoTranslations)
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cxx: g++
+            compiler: ''
+            options: -DNoTranslations=1
+            experimental: false
+            sanitize: false
+            valgrind: true
+          - name: Alpine x86_64 (g++, NoPidgin)
+            runner: ubuntu-24.04
+            platform: linux/amd64
+            cxx: g++
+            compiler: ''
+            options: -DNoPidgin=1
+            experimental: false
+            sanitize: false
+            valgrind: true
+          - name: Alpine x86 (g++)
+            runner: ubuntu-24.04
+            platform: linux/386
+            cxx: g++
+            compiler: ''
+            options: ''
+            experimental: false
+            sanitize: false
+            valgrind: true
+          - name: Alpine aarch64 (g++)
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            cxx: g++
+            compiler: ''
+            options: ''
+            experimental: false
+            sanitize: true
+            valgrind: true
+          # Under QEMU, unless the arm64 runner's CPU runs 32-bit code itself.
+          - name: Alpine armv7 (g++, experimental)
+            runner: ubuntu-24.04-arm
+            platform: linux/arm/v7
+            cxx: g++
+            compiler: ''
+            options: ''
+            experimental: true
+            sanitize: false
+            valgrind: false
+    defaults:
+      run:
+        shell: docker exec alpine sh -e {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.platform == 'linux/arm/v7'
+
+      # The workspace and the runner's temporary directory (where each step's
+      # script is written) are mounted at the same paths inside.
+      - name: Start Alpine edge (${{ matrix.platform }})
+        id: boot
+        shell: bash
+        run: >-
+          docker run -d --name alpine --platform ${{ matrix.platform }}
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$RUNNER_TEMP:$RUNNER_TEMP"
+          -w "$GITHUB_WORKSPACE" -e GITHUB_ACTIONS
+          alpine:edge sleep infinity
+
+      # TDLib is in edge's testing repository, as telegram-tdlib.
+      - name: Install dependencies
+        id: install
+        run: |
+          echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >> /etc/apk/repositories
+          sh .github/annotate.sh Setup apk add --no-cache \
+              cmake samurai pkgconf gettext gettext-dev g++ ${{ matrix.compiler }} \
+              pidgin-dev telegram-tdlib-dev telegram-tdlib-static openssl-dev zlib-dev \
+              fmt-dev rlottie-dev gtest-dev shared-mime-info ${{ matrix.valgrind && 'valgrind' || '' }} \
+              ${{ matrix.sanitize && 'clang compiler-rt' || '' }}
+          apk info -v telegram-tdlib-dev
+
+      - name: Configure
+        id: configure
+        run: >-
+          sh .github/annotate.sh Configure
+          env CXX=${{ matrix.cxx }}
+          cmake -G Ninja -S . -B build -DNoVoip=1 ${{ matrix.options }}
+          -DCMAKE_CXX_FLAGS="${{ env.WARNINGS }}"
+
+      - name: Build
+        id: build
+        run: >-
+          sh .github/annotate.sh Build
+          cmake --build build --target all tests
+
+      - name: Test
+        id: test
+        run: sh .github/annotate.sh Test cmake --build build --target run-tests
+
+      # The same tests again, under Valgrind: it finds reads of uninitialised
+      # memory, use after free and invalid accesses, as well as definite leaks,
+      # none of which the tests notice.  Slow, hence a step of its own (and
+      # none under QEMU).
+      - name: Valgrind
+        id: valgrind
+        if: matrix.valgrind
+        run: >-
+          sh .github/annotate.sh Valgrind
+          cmake -E chdir build/test
+          valgrind --error-exitcode=1 --leak-check=full
+          --suppressions=$PWD/.github/valgrind.supp
+          --errors-for-leak-kinds=definite ./tests
+
+      # And once more built with AddressSanitizer and UndefinedBehaviorSanitizer,
+      # which see what Valgrind cannot (out-of-range array indexes on the
+      # stack, signed overflow, a bool holding neither value).  gcc on Alpine
+      # has no sanitizer runtime, clang has (compiler-rt).  `vptr` is off
+      # because TDLib is built without RTTI, and `function` because libpurple's
+      # callbacks are called through a cast pointer type by design.  Leak
+      # detection is off because it cannot run in a container (Valgrind has
+      # looked for leaks).  Alpine has no sanitizer runtime for 32-bit x86.
+      - name: Sanitizers
+        id: sanitize
+        if: matrix.sanitize
+        run: |
+          sh .github/annotate.sh Sanitizers env CXX=clang++ \
+              cmake -G Ninja -S . -B build-san -DNoVoip=1 ${{ matrix.options }} \
+              -DCMAKE_CXX_FLAGS="${{ env.WARNINGS }} ${{ env.SANITIZERS }}"
+          sh .github/annotate.sh Sanitizers cmake --build build-san --target tests
+          sh .github/annotate.sh Sanitizers cmake -E chdir build-san/test \
+              env ASAN_OPTIONS=detect_leaks=0 ./tests
+
+      - name: Install
+        id: destdir
+        run: >-
+          sh .github/annotate.sh Install
+          env DESTDIR="$PWD/destdir" cmake --build build --target install
+          && find destdir -type f
+
+      # On the runner, not in the container: it may never have started.
+      - name: Record outcome
+        if: always()
+        shell: bash
+        env:
+          ORDER: 0${{ strategy.job-index }}
+          NAME: ${{ matrix.name }}
+          SETUP: ${{ steps.boot.outcome }} ${{ steps.install.outcome }}
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          INSTALL: ${{ steps.destdir.outcome }}
+          VALGRIND: ${{ steps.valgrind.outcome }}
+          SANITIZE: ${{ steps.sanitize.outcome }}
+        run: sh .github/record.sh
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: outcome-${{ github.job }}-${{ strategy.job-index }}
+          path: outcome.tsv
+
+  bsd:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # cmake-core, not the cmake metapackage, which the repositories may
+          # lack, as FreeBSD 15's did in October 2026: the program is all we use.
+          - name: FreeBSD 15.1
+            os: freebsd
+            version: '15.1'
+            experimental: false
+            valgrind: true
+            sanitize: true
+            prefix: /usr/local
+            options: ''
+            install: >-
+              sudo pkg install -y cmake-core ninja pkgconf gettext-tools
+              libpurple pidgin tdlib libfmt rlottie googletest shared-mime-info valgrind
+          # Without the pidgin package, so a stray need for its headers fails.
+          - name: FreeBSD 15.1 (NoPidgin)
+            os: freebsd
+            version: '15.1'
+            experimental: false
+            valgrind: false
+            sanitize: false
+            prefix: /usr/local
+            options: -DNoPidgin=1
+            install: >-
+              sudo pkg install -y cmake-core ninja pkgconf gettext-tools
+              libpurple tdlib libfmt rlottie googletest shared-mime-info
+          - name: FreeBSD 14.4
+            os: freebsd
+            version: '14.4'
+            experimental: false
+            valgrind: true
+            sanitize: true
+            prefix: /usr/local
+            options: ''
+            install: >-
+              sudo pkg install -y cmake-core ninja pkgconf gettext-tools
+              libpurple pidgin tdlib libfmt rlottie googletest shared-mime-info valgrind
+          # No rlottie package, so no animated stickers; built without Pidgin's
+          # headers, so that the build without them is tried somewhere.
+          - name: OpenBSD 7.9 (experimental, NoLottie, NoPidgin)
+            os: openbsd
+            version: '7.9'
+            experimental: true
+            valgrind: false
+            sanitize: false
+            prefix: /usr/local
+            options: -DNoLottie=1 -DNoPidgin=1
+            install: >-
+              sudo pkg_add -I cmake ninja gettext-tools libpurple tdlib fmt
+              gtest shared-mime-info
+    defaults:
+      run:
+        shell: cpa.sh {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Boot ${{ matrix.name }}
+        id: boot
+        uses: cross-platform-actions/action@v1.8.0
+        with:
+          operating_system: ${{ matrix.os }}
+          version: ${{ matrix.version }}
+
+      - name: Install dependencies
+        id: install
+        run: ${{ matrix.install }}
+
+      # The packages live under ${prefix}, which the compiler and linker do
+      # not search by themselves (gtest, fmt, libintl); the ports tree's
+      # USES=localbase does the same.  CMakeLists.txt resets the linker
+      # flags, so the search paths go in the environment (CPATH,
+      # LIBRARY_PATH) -- and, as nothing from the runner reaches the VM
+      # except through the command line, `env` sets them, and ${{ }} is
+      # expanded before the command is sent.
+      - name: Configure
+        id: configure
+        run: >-
+          sh .github/annotate.sh Configure
+          env CPATH=${{ matrix.prefix }}/include
+          LIBRARY_PATH=${{ matrix.prefix }}/lib
+          PKG_CONFIG_PATH=${{ matrix.prefix }}/lib/pkgconfig:${{ matrix.prefix }}/libdata/pkgconfig
+          cmake -G Ninja -S . -B build -DNoVoip=1 ${{ matrix.options }}
+          -DCMAKE_PREFIX_PATH=${{ matrix.prefix }}
+          -DCMAKE_CXX_FLAGS="${{ env.WARNINGS }}"
+
+      - name: Build
+        id: build
+        run: >-
+          sh .github/annotate.sh Build
+          env CPATH=${{ matrix.prefix }}/include
+          LIBRARY_PATH=${{ matrix.prefix }}/lib
+          cmake --build build --target all tests
+
+      - name: Test
+        id: test
+        run: >-
+          sh .github/annotate.sh Test
+          env LD_LIBRARY_PATH=${{ matrix.prefix }}/lib
+          cmake --build build --target run-tests
+
+      # Valgrind and the sanitizers, as in the Linux jobs; clang is the base
+      # system's compiler here, and comes with the sanitizer runtimes.
+      - name: Valgrind
+        id: valgrind
+        if: matrix.valgrind
+        run: >-
+          sh .github/annotate.sh Valgrind
+          env LD_LIBRARY_PATH=${{ matrix.prefix }}/lib
+          cmake -E chdir build/test
+          valgrind --error-exitcode=1 --leak-check=full
+          --suppressions=$PWD/.github/valgrind.supp
+          --errors-for-leak-kinds=definite ./tests
+
+      - name: Sanitizers
+        id: sanitize
+        if: matrix.sanitize
+        run: |
+          sh .github/annotate.sh Sanitizers \
+              env CPATH=${{ matrix.prefix }}/include LIBRARY_PATH=${{ matrix.prefix }}/lib \
+              PKG_CONFIG_PATH=${{ matrix.prefix }}/lib/pkgconfig:${{ matrix.prefix }}/libdata/pkgconfig \
+              cmake -G Ninja -S . -B build-san -DNoVoip=1 ${{ matrix.options }} \
+              -DCMAKE_PREFIX_PATH=${{ matrix.prefix }} \
+              -DCMAKE_CXX_FLAGS="${{ env.WARNINGS }} ${{ env.SANITIZERS }}"
+          sh .github/annotate.sh Sanitizers \
+              env CPATH=${{ matrix.prefix }}/include LIBRARY_PATH=${{ matrix.prefix }}/lib \
+              cmake --build build-san --target tests
+          sh .github/annotate.sh Sanitizers \
+              cmake -E chdir build-san/test \
+              env LD_LIBRARY_PATH=${{ matrix.prefix }}/lib ASAN_OPTIONS=detect_leaks=0 ./tests
+
+      - name: Install
+        id: destdir
+        run: >-
+          sh .github/annotate.sh Install
+          env DESTDIR="$PWD/destdir" cmake --build build --target install
+          && find destdir -type f
+
+      # On the runner, not in the VM: it may never have booted.
+      - name: Record outcome
+        if: always()
+        shell: bash
+        env:
+          ORDER: 1${{ strategy.job-index }}
+          NAME: ${{ matrix.name }}
+          SETUP: ${{ steps.boot.outcome }} ${{ steps.install.outcome }}
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          INSTALL: ${{ steps.destdir.outcome }}
+          VALGRIND: ${{ steps.valgrind.outcome }}
+          SANITIZE: ${{ steps.sanitize.outcome }}
+        run: sh .github/record.sh
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: outcome-${{ github.job }}-${{ strategy.job-index }}
+          path: outcome.tsv
+
+  summary:
+    name: Summary
+    needs: [lint, linux, bsd]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: outcome-*
+          merge-multiple: false
+          path: outcomes
+
+      - name: Tabulate
+        run: sh .github/summary.sh outcomes >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,334 @@
+# Changelog
+
+## Unreleased
+
+### Features
+
+- **Whether pictures are downloaded as they come is chosen for the account, "Download media automatically", and for each conversation, from its menu or its contact's or chat's in the buddy list: "Stop downloading media automatically", or "Download media automatically".** Where they are not, a picture stays as its stand-in, the blurred low-grade picture the message carries, with its size links, or one to fetch it, below it. Nor are videos and documents fetched beforehand, to open at once when clicked. Turned on in a conversation, its pictures on screen are fetched at once, and the others as they come into view. A stranger's, and a channel's or group's not joined, under "Telegram: not in contacts" and "Telegram: not joined", are not downloaded unless turned on for it, which lasts while the program runs. A picture that failed to download is tried again, quietly, as its message comes into view.
+- **In Pidgin, a message with a photo, a sticker, a video's cover or a rich message's pictures is shown at once, each picture as a stand-in of its size, written over once the picture is here.** A stand-in is the blurred low-grade picture the message carries, or a grey box, a clear one for a sticker, so that nothing below it moves as the picture comes. Such a message waited for its pictures, holding back those after it, for a second or longer; a picture later still came at the tab's end as a line of its own, and a video's cover not at all; a sticker said "Converting sticker". The log gets the message once its pictures are in, or have failed, or as the account goes. A picture past the limit on what is fetched unasked stays as its stand-in, its sizes' links fetching it, rather than a dialog asking or a notice saying it is ignored. An animated sticker is converted once for every message showing it. A photo comes in the size a video's cover or a rich message's picture does, by one rule: the smallest at least 23 lines of the tab's text tall, or else the tallest, of the sizes within the limit on what is fetched unasked; it was the biggest within that limit, often several times as big as shown. Covers and rich messages' pictures, which were 20 lines tall, keep within the limit now too. A picture opened from its link, a rich message's or a photo's, is fetched in its biggest size, whatever the limit. Elsewhere than Pidgin, a message still waits for its pictures, a photo the biggest within the limit.
+- **A rich message, laid out in blocks as an instant view page is, as a shop's channel may post, is shown as text: its headings, paragraphs, lists, quotes and tables, with its links and formatting.** It was shown as TDLib's description of it, cut short. Its pictures are shown in it, as a photo is, in the size a video's cover is chosen in, within the limit on what is fetched unasked; each links to its file, opening it when clicked. Its other media, and a picture past the limit, are placeholders with their captions, linked so too. With TDLib 1.8.65 or newer, which brought such messages.
+- **In Pidgin, the buttons a bot or a channel puts under a message are shown, row by row, between the message and its reactions, and work when clicked.** A link's button opens it, its address in the tooltip, and is marked with an arrow; a bot's button asks the bot, whose answer is told in the tab, or in a dialog if it says so; a button copying text puts it on the clipboard; one naming a user opens the chat with them. A button coloured as a warning, or as success, is in red or green. Those that only Telegram's apps can follow, as for payments or web apps, say so. When the bot changes the buttons, the lines change with them.
+- **In Pidgin, the menu of a message in a public group or channel has "Copy the message's link", which puts its https://t.me/ link on the clipboard**, for anyone to open, in Telegram or a web browser. Telegram gives such links only for the messages of public chats; if the chat stops being public while the menu is open, the conversation says so instead of copying a link only its members could open.
+- **The local database of an account can be encrypted with the account's password, which Pidgin asks for at every connection unless told to remember it.** "Encrypt the local database with the password", in the account's settings, turns it on; the account's password is now optional, for it. Until now the database was encrypted with a key built into TDLib, which anyone with the files could open. An existing database is encrypted once the password is typed again to confirm it, and goes back to the built-in key when the option is turned off; "Change the database password..." encrypts it anew. Each rewrites the whole database, which takes long for a big one, and the dialogs say so. The password goes through PBKDF2 with 600,000 iterations before TDLib gets it, as TDLib takes its key for a strong one. Where TDLib is built with plain SQLite rather than SQLCipher, which leaves the messages unencrypted, a warning says so.
+- **A message can be forwarded to several buddies and chats at once, ticked in the dialog that asks where to.** In Pidgin's dialog, the ticks stay as what is typed narrows the list down, so that one can be found, ticked, and the next one looked for; with none ticked, the one picked is forwarded to, as before. Other front-ends' dialogs let several be chosen. A destination that cannot take the message is told of, and the others still get it.
+- **In Pidgin, clicking a reaction on the line under a message gives it as ours too, or takes ours back, in one click, as the phone app does.** Until now a reaction could only be given from the message's menu. Whether we gave it is asked of Telegram as it is clicked, so a line not yet up to date does not mislead it; the paid reaction asks how many stars, as from the menu.
+- **A group member can be reported to Telegram's moderators, by themselves, from the menu of any message of theirs: "Report" and their name.** Until then only the message could be, or the group as a whole. Telegram takes a report about a user by the private chat with them, which is made for it if need be; how it went is told in the group.
+- **A Telegram link, such as `tg://resolve?domain=channel&post=12`, handed to libpurple over D-Bus, as a web browser's handler for such links can, opens its chat at that post.** TDLib tells what the link leads to: a chat, or a message in it, which the chat's conversation is opened at, filled from it if it does not show it; a channel or group not joined is shown too. Another kind of link, or one that leads nowhere, is told in a dialog. The first Telegram account connected follows it, or the one its `account` parameter names. `tdlib-purple-tg-link`, installed with the plugin, hands a link over, with `gdbus` only, telling what went wrong as a notification or with `xmessage`; `tdlib-purple-tg-link.desktop`, made the handler of `tg:` links, has a web browser start it, as README.md says.
+
+### Fixes
+
+- **A channel or group not joined, its tab open, gets its new posts as they come.** They were dropped, the account showing no messages of chats it is not a member of, so a channel being read showed only what its tab was filled with. Where the tab is scrolled so far back that a new post would not fit, it waits for the tab's end to be scrolled to, as in any chat. With the tab closed, they are dropped as before.
+- **In Pidgin, switching to a tab with unread messages scrolls it to the first unread one without blanking it, when the tab holds that message already.** The tab was filled anew all the same: the message showed, the tab went blank a moment, and the message came back.
+- **In Pidgin, a channel only looked at, never joined, comes back to the buddy list after a restart.** What a tab is filled with is not logged, the log having it already; so a chat whose messages were all fetched so, as a channel opened from a link or a search, had no log at all, and nothing brought it back. A chat with no log now logs what its tab is filled with.
+- **Every chat with messages in Pidgin's log can be opened from the buddy list again, after a restart: a channel or group not joined, or left, under "Telegram: not joined", someone not a contact under "Telegram: not in contacts".** TDLib does not list a chat not joined, so one opened from a link, or left, could not be found again once Pidgin quit; a chat's log now brings back its entry, for as long as the program runs. Opening such an entry shows the chat, to be read, rather than saying we are no longer a member.
+- **"Delete group" leaves nothing of the chat: its messages, for us, as on our other devices, its files and Pidgin's log of it on this computer, its tab, its entry and its settings all go.** Ours, with other members, it asks whether to delete it for everyone or only for us, leaving it to them; Telegram deletes a group or channel for everyone only for its owner, so one someone else owns is left, and one not joined is only taken out of the buddy list, no longer an error. A basic group someone else made can be deleted so too, where it used to be refused. So for a buddy removed with Pidgin's "Remove", which also takes a contact off the contacts as before, and for a stranger, of whom only the entry used to go; the chat stays on Telegram for the other side. "Leave group" only leaves: what we saw of the chat stays, its history for us included, which it used to delete.
+- **"Delete group" deletes a supergroup or channel again.** TDLib was asked to delete the chat by the supergroup's id rather than the chat's, a remnant of the request it replaced.
+- **A stranger who writes first, whom Telegram offers to report as spam, can be reported: "Report…" in the buddy's menu, and "Report" and their name in the menu of their message.** That offer, the bar the phone app shows above such a chat, is the only report Telegram takes about a person, and it was offered nowhere. Such a stranger's chat is under "Telegram: not in contacts" as soon as Telegram tells of it, at login too: until now it was only when they wrote, so after a restart the chat could not be found to be opened.
+- **Someone not a contact stays under "Telegram: not in contacts", answered or reported, until moved into another group, which adds them to contacts, or deleted; a channel or group under "Telegram: not joined", moved so, is joined.** Answering someone, or reporting them, used to make them a lasting buddy in the default group, unasked, as Telegram's offer to report them went. An entry moved out of either group by hand was not kept where it was put, but came back at the next start, and Telegram was not told. Moved so, a person is added under the name they gave themselves, without our phone number shared with them (whether they see it still depends on our phone number's privacy setting); either entry, once the person is a contact or the chat joined, stays where it was put, and if that fails, it is said so, and the entry goes back where it was. A buddy kept already for someone not a contact stays where it is.
+- **Renaming a contact in the buddy list no longer shares our phone number with them.** A rename goes to Telegram as adding the contact again, which asked each time for our number to be shared, as when adding someone by hand.
+- **Joining a channel or group no longer says it failed when it worked, and says when it is a request that its administrators have to approve.** Since TDLib 1.8.65 a join is answered by how it went, which was taken for an error: "Unexpected response". A join that a bot has to approve, or that it declined, is told as such.
+- **In Pidgin, a buddy's tab is filled, and the buddy can be reported, even if they are neither a contact nor in the chat list, as one blocked whose chat was deleted.** TDLib did not tell of such a buddy at login, so the tab stayed empty with nothing said, and the buddy's menu had no "Report…". The chat is now asked of TDLib as the tab opens; if Telegram does not know them any more, the tab says so.
+- **In Pidgin, the menu of an edited message's text has the message's items, also after reactions to it were taken back.** The new text went in after the end of the line of reactions, at the old text's end, which was then taken for the message's own.
+- **In Pidgin, a link to a message deleted since, struck out as it comes back from the conversation's log, scrolls to it**, rather than saying it is not shown. And the menu of a link to a message, in a quote or a notice, has the message's items, or says that it has been deleted, rather than nothing.
+- **In Pidgin, the menu of a file's link, such as a video's under its cover, has the message's own items too, as its text's and its picture's menus do**, rather than "Copy the file" alone. As in those, the menu's own item, the link's "Copy the file", is on top, and the message's follow after a separator, in the same order everywhere, without a second "Copy the file" of the same file. A picture's "Copy the picture" is now "Copy the image", as Pidgin's own "Save Image..." names it.
+- **In Pidgin, a chat's tab opened at a message far back, such as the first of many unread, shows that message and some 200 after it, and the rest as it is scrolled down to its end, fifty at a time; it is quick to fill, and a line where it is scrolled, at its top or its end, says what is fetched and shown, and how many.** The tab was filled with every message from there to the newest, at once: Pidgin takes the longer to write a message the more the tab holds, so that 3000 channel posts took a quarter of an hour, and then it trimmed the tab, by the line, to its "scrollback_lines", taking away the very message the tab was opened at. A tab is now kept to half of that, whole messages taken from its other end as more are shown; where Pidgin keeps all lines, it is not trimmed, but still filled 200 at a time, and one opened at the chat's first message is not filled anew as it is scrolled up (only where a tab's lines cannot be counted, as outside Pidgin or with a GTK lacking the function, is the whole history shown as before). A message that comes while the tab stops short of the newest is logged and told of, but shown when the tab gets there; sending from such a tab fills it with the newest first, as "Go to the latest message" does, in the menu of a message in it and in that of its tab's title.
+- **In Pidgin, switching to a chat's tab that was open but not shown while messages came takes the user to the first unread one, as opening the tab anew does, rather than to the end.** Pidgin keeps a tab at its end as messages are written to it, whether or not anyone looks; a tab coming into view with messages unread is now filled anew from the first unread, with read ones before it.
+- **A conversation with someone not in the buddy list goes by their id, as any other, and they are in the buddy list, in "Telegram: not in contacts", until the program quits; their messages are marked read as they are seen, and adding them as a contact keeps the conversation's tab.** The conversation went by their display name, which anyone may choose: so a message could be sent to whoever had taken that name, or, for a display name such as `id0`, to whatever the plugin itself goes by. A name typed in to write to is taken as an id, a phone number or a @username, but no longer as a display name; a group's members, in its member list and in kicking, inviting and creating a group, are still found by their names. Removing such a buddy from the list removes nothing on Telegram.
+- **"Add Buddy..." on a group's member adds them as a contact**, rather than looking for a public chat by their id and finding none.
+- **A name beginning with "se", as a group member's display name may, is no longer read past its end** when it is checked for a secret chat's.
+- **Where a front-end has no dialogs to ask for the login code, the two-step verification password or the display name, as webOS Messaging, the answer typed into the "Telegram" chat is taken as it is meant.** The chat was told by its name, "Telegram", regardless of case, which a front-end may change and anyone may call themselves; it goes by `id0` now, an id no Telegram user has, shown as "Telegram", and is matched exactly. The chat's buddy is removed once logged in, or as a login is given up, and is never saved in the buddy list. By **Herrie82**.
+- **In Pidgin, a reaction picked from the menu of a message's picture is given, rather than the menu closing with nothing done.** Pidgin opens that menu as the right button is let go, which left GTK taking that button for the one to pick a submenu's item with, and handing a click of the left one on to the menu instead.
+- **In Pidgin, a chat's tab in a focused window is known to be shown again, so that its messages are read as they come into view and its reactions are kept up to date.** 0.9.6 followed the focus by a hook that GLib refuses, on GObject's "notify", so that no tab was ever taken to be shown.
+- **The reaction counts of every post on screen in a channel are kept up to date, not only those of the latest.** Telegram polls the reactions of the last messages it was told were viewed, which went newest first, so that the oldest on screen were the ones kept.
+- **In Pidgin, a chat's tab no longer shows Pidgin's notice that the account has disconnected again after every start, nor turns red as having new messages when filled with those already read.** Quitting, Pidgin tells every chat the account has disconnected, and logged it, so that it came back with the rest of the log.
+- **An animated sticker's or custom emoji's GIF no longer stays behind in the temporary directory when its account or chat is gone by the time it is converted**, as when Pidgin quits or the account disconnects meanwhile.
+- **A message of ours, edited and then deleted from here, is said to be deleted by us as our own**, rather than named as one we sent like another member's. An edit forgot that the message was ours.
+- **In Pidgin, our own messages deleted since are struck out, or left out, when a chat's tab is filled again, like everyone else's.** Ours were logged as they were written, before Telegram gave them the ids they keep, so that the log could not say which they were. Now each is logged once sent, under its lasting id; one never sent is not logged at all, though TDLib still shows it.
+
+### Translations
+
+- **Czech, German, Polish, Albanian and Ukrainian are complete again**, with the strings 0.9.6 added: forwarding, copying a message's file or picture, a group's news, and who deleted a message.
+- **The same languages have the strings added since: the local database's password, forwarding to several chats at once, the buddy-list group of those not in the contacts, and reporting a group's member.** Some had been matched by msgmerge to older strings they resembled, and said, for instance, "New password" for "Database password" or "Enable secret chats" for encrypting the database.
+
+## 0.9.6 (2026-11-14)
+
+### Features
+
+- **A message's menu forwards it: to a buddy or a chat of this account, or of another, chosen in a dialog whose field searches the list as you type.** Within the account, Telegram forwards the message, so that what it carries goes without being uploaded again, marked as forwarded, as the phone app has it. To another account's buddy, or to a chat of its that is open, the message's text is sent through that account, headed by whom it came from; its file goes by file transfer, where that protocol sends files to the buddy, and is otherwise said to be left out. Elsewhere than Pidgin, the dialog is libpurple's list.
+- **An account option sends a file sent by file transfer ("Send File...") as what its content is, as a pasted one goes: a picture as a photo, a video as a video, an Opus recording as a voice message, with its length, anything else as a file.** Off, as by default, every file goes as a file, as before. It is for front-ends that send everything they attach as a file transfer, having no placeholders to choose by. By **Herrie82**.
+- **In Pidgin, a chat's reactions are kept up to date while its tab is shown, as the phone app does for the chat on its screen, and its messages are read as they come into view.** A tab is shown while it is the one chosen in its window and the window is not minimized: Telegram tells the reactions in channels and big groups only to those looking at them. A message is in view once its tab has not scrolled for a second, while its window has the focus and the screen is not locked, as the desktop's screen locker tells over D-Bus, nor blanked by the X server, nor its monitor asleep; as Telegram has it, reading it reads those before it too. A tab not shown, or left in a window without the focus, leaves its messages unread. Elsewhere, a chat is kept up to date while its conversation is open. While libpurple takes the user to be idle, by Pidgin's setting, the chats are closed, and nothing is read; otherwise Telegram is told the user is online, as it needs to keep the reactions of messages seen up to date: contacts may see that, and the phone gives no notifications meanwhile.
+- **A group's own news is told in words: "X created Physics", "X added A, B", "X joined", "X joined by an invite link", "X left", "X removed Y", "X pinned a message", rather than "Unsupported message type".** Members are named as TDLib has given their names, and "Unknown user" where it has not yet; an anonymous channel post names nobody. By **Herrie82**.
+- **A message or a call can be addressed to a phone number, such as +15555550100, or a Telegram @username, as well as to a buddy's id or display name.** A display name still comes first; a username matches without regard to case, with or without its @. By **Herrie82**.
+- **Where the front-end has no dialogs to ask in, signing in asks for the code, the password or a new account's name in a conversation with a buddy called "Telegram"**, whose answers are taken as the input, rather than giving up or waiting forever. By **Herrie82**.
+
+### Fixes
+
+- **In Pidgin, a message's own items are in the menu of its picture too, after "Save Image...", and in the menu opened beside its last line.** Pidgin's picture menu is its own, which GTK's of the text was never part of; and to the right of a message's last line, or over the right half of its last character, the message was taken to have ended already.
+- **A message forwarded to a chat whose tab was not open has its menu, rather than "The message has been deleted."** The tab, opened and filled from Telegram meanwhile, showed the message by the temporary id it had while being sent.
+- **A forwarded picture, or one replying to a message, is no longer preceded by an empty line.** The picture begins a line of its own already.
+- **The notice of a message deleted from its menu here names us as who deleted it, and every deletion notice names who sent the message, in a private chat too, and our own messages as well.** Telegram does not say who deletes a message; the log of a supergroup's events tells only its administrators. Only a channel's post signed by nobody has no one to name. Naming the sender in a group, as the start of it, is by **Herrie82**.
+- **The account option "Keep inline downloads" works again**, setting TDLib's use_storage_optimizer, which took the place of the parameter it used to set. By **Herrie82**.
+- **A call to a user whose id is beyond 2³¹, as many now are, goes to that user**, the id no longer truncated on its way. By **Herrie82**.
+- **Logging in with many contacts is faster: the chats missing for them are asked for 16 at a time, not one by one.** By **Herrie82**.
+- **A group or channel in the buddy list that TDLib has not told of opens all the same, if it can be found, rather than nothing happening.** TDLib is asked for it by its id, from what it has stored, and then Telegram by its public name, which the buddy list now keeps for a public group or channel; only a chat with the same id counts, a name being free to go to another. If neither finds it, a dialog says so.
+- **A chat read to its end on another device no longer shows as having unread messages, in Pidgin's tab and the counts of the tray and the buddy list's menu, once Telegram tells that.** It tells every session, connected but offline too; a chat read only in part keeps Pidgin's mark, which counts what came since its tab was looked at.
+
+## 0.9.5 (2026-11-01)
+
+### Features
+
+- **In Pidgin, a message's reactions are listed in a line under it, kept up to date as they change.** Each with its count if more than one, our own in bold; a custom emoji as its picture, unless the account shows custom emoji as ordinary ones. The notices of reactions stay, and the line is not logged.
+- **In Pidgin, a reaction under a message, pointed at, lists who gave it in its tooltip.** Those Telegram names with it at first, the latest few in a group, then all of them, up to a hundred, once fetched; channels name nobody.
+- **In Pidgin, a conversation opened is filled with its messages from Telegram from the first unread one, scrolled to it, with 50 read ones before it, and more if they still fit the window, as the phone app does, and with what Pidgin's log of it has that Telegram does not.** From the log come the notices, such as of edits and reactions, and messages since deleted, struck out or left out as set for the chat; a message the log does not name goes in only if Telegram has none at much the same time. Only logs in HTML are read.
+- **In Pidgin, scrolling a conversation to its top, or turning the mouse wheel up there, fills it anew from 50 more messages before the earliest it showed, which stays at the top, and more if they still fit.** Until the chat's first message is shown, or the conversation holds as many lines as Pidgin keeps.
+- **In Pidgin, a reaction to one of our messages that the conversation does not show fills the conversation anew, from that message to the latest, as the phone app does.** Up to as many messages as Pidgin's scrollback setting keeps; the messages are taken from TDLib, which has them stored, and are not logged again, nor are big files offered for download again.
+- **In Pidgin, an edited message is written over its earlier version, which keeps its header, and a deleted one is taken out of the conversation, or struck out where it stands, as set for the account or the chat.** The notice of the edit or deletion still follows at the end of the conversation, linking to the message, and the log is as before. Messages shown before this version are told of by the notice only.
+- **In Pidgin, a reply's quote and the notices of an edit, a deletion or a reaction link to their message, scrolling the conversation to it.**
+- **In Pidgin, right-clicking a message adds its own items to the menu of the conversation's text: a reaction can be added or taken back, and the message edited or deleted, as Telegram allows.** An edit is made in the conversation's input field, tinted meanwhile, where the next message sent replaces the one edited; Esc, /cancel, the menu or sending it unchanged gives the edit up, and what the field held before comes back. Elsewhere, a dialog. An edit is plain text, as messages are sent. Reactions that need Telegram Premium are offered dimmed, to be tried; the paid ⭐ asks how many Telegram Stars to spend; custom-emoji ones are not offered. A reaction that cannot be set is reported in the conversation.
+- **A chat with reactions to our messages not seen yet is marked with ❤️ before its conversation's title and, in Pidgin, its contact's name in the buddy list, as the phone app marks it.** The reactions count as seen once the conversation is, and the mark goes.
+- **Blocking someone in Pidgin blocks them on Telegram, and unblocking unblocks them; Pidgin's list of blocked users follows Telegram's.** A message's menu offers to block or unblock its sender, contact or not. Pidgin's privacy setting for the account becomes "block only the users below", as Telegram has it.
+- **A message can be reported to Telegram's moderators from its menu, and a chat that Telegram takes reports about from the contact list and the conversation's More menu.** The reason is picked in as many steps as Telegram asks for, then details given, if it wants them.
+- **What is pasted into a message, files copied to the clipboard or its picture, is sent with the message, written in its text as a numbered placeholder: [Image#1] or [Video#2] sends a picture or video as such, [name#N] sends thing N as a file under that name, its own, as [report.pdf#3], or any other.** The text after one is its caption, and several in a row go as an album, up to ten. A file gone by the time the message is sent keeps it from being sent. In Pidgin, the input field shows a placeholder as a thumbnail of its file, as tall as five lines of its font, the placeholder in its tooltip: the picture itself, the one file managers keep, or one the thumbnailer registered for the file's type makes. Editing a message with a picture, video or file shows it by a placeholder too, before the caption: put another in its place, or write it as a file or under another name, and it is replaced, as far as Telegram allows, fetched first if it is not here. In Pidgin, a placeholder's menu in the input field, or its thumbnail's, switches it between the two, or takes it out; pasting into the input field puts the placeholders there, of the files or the picture, as does dropping files onto the conversation, group chats too, or a picture from a browser, which is fetched; /paste does the same, and elsewhere, as in Finch, says the placeholders, the clipboard read with xclip, if installed; if xclip fails, what it says is the command's error.
+- **In Pidgin, a message's file can be copied to the clipboard from the message's menu, "Copy the file", or "Copy the picture" for a photo or a still sticker, and from the menu of its link.** Downloaded first, if need be. It is offered as the file, for a file manager to paste a copy, or another conversation to send it, as its path, for text, and, being a picture, as the picture itself, for a program that takes one.
+- **In Pidgin, a file can be dragged out of a conversation, by its link or by its picture, and dropped into another program, a file manager or another conversation, which sends it.** A photo or a still sticker drops as a picture too, and a video's cover as the video. The file is fetched as the drag begins, downloaded if need be, and the drop waits up to five seconds for it.
+- **In Pidgin, a video's cover is shown in the size of it at least twenty lines of the conversation's text tall, so that it grows with the font.** Rather than one as wide as a thumbnail, 320 pixels, which was small; a video without a cover still shows its thumbnail, the only picture of it Telegram sends.
+
+### Fixes
+
+- **In Pidgin, "Save Image..." suggests the picture's own file name, a photo's, a sticker's, a custom emoji's or a video cover's, rather than none.**
+- **Messages that came while the account was offline are all shown once it connects, not only the latest 80 of a chat.** Fetching them stops at the last message seen before, or the first older one if it has been deleted since, which is what the limit guarded against. Like those filling a conversation, they make no sound, nor any notification, which only messages coming now do.
+- **In Pidgin, "Last Said" on our own entry in a group chat's member list goes to our latest message there, rather than being disabled.** Pidgin finds it by the name a message is written under, which for ours is not the one the list has us by.
+- **Our own entry in a group chat's member list shows our information, as anyone else's does, rather than "User not found".** Group chats list us by the account's name, our phone number, which the lookup took for a display name.
+- **A photo whose file cannot be read is shown as the link to its file, rather than as a picture Pidgin never loads.** Pidgin shows only pictures put in its image store, never those of `<img src=...>`.
+- **A link to the file of a message we sent, clicked, opens it rather than saying the message is not found.** The link named the id the message went by while being sent, which Telegram replaces once it is.
+
+### Build
+
+- **Pidgin's headers are needed to build, for features of its conversation window, and `-DNoPidgin=True` builds without them.**
+- **GIO is linked, for the types of the files pasted, told by their content, never their names, as shared-mime-info's magic has them.** It comes with GLib; without shared-mime-info's database installed, every file goes as a document.
+- **TDLib 1.8.44 or newer is required, as is checked, rather than the 1.8.0 still declared, which the code had long outgrown.** Video covers came with 1.8.44; later changes to TDLib's API are followed whichever release is found.
+
+## 0.9.4 (2026-10-27)
+
+### Fixes
+
+- **A video's file link gives its file size and, where it has other sizes, is marked as the original, which is no longer listed among them.**
+- **A conversation with someone new stays in its tab when they join the buddy list, instead of moving to another.**
+- **A stranger who writes to you is no longer added to the buddy list while Telegram offers to report them as spam.**
+- **A deleted account's buddy keeps its name, marked "(deleted)", and moves to the group "Deleted Accounts (Telegram)", instead of losing its name.**
+
+## 0.9.3 (2026-10-19)
+
+### Features
+
+- **Edits and deletions of messages already shown are reported in the conversation.**
+- **Locations, venues and live locations are shown as `geo:` links.**
+- **An account option shows messages from channels and groups you have not joined.**
+- **Reactions are shown, custom emoji among them, as messages from whoever reacted.**
+- **In Pidgin, a file is linked to its message and fetched when clicked, so the message is shown whole at once.**
+- **Custom emoji are shown as pictures in Pidgin, in messages as in reactions.**
+- **In Pidgin, each size of a photo or video has a link of its own, and an account option chooses which video to prefetch.**
+
+### Fixes
+
+- **TDLib's log goes to the debug window instead of stderr.**
+- **File links work in front-ends other than Pidgin.**
+- **Channels you are not a member of no longer open conversations.**
+- **Front-ends that show no pictures, such as BitlBee, get links to photos and stickers instead.**
+- **Notices in channels no longer name "Channel post" as though it were someone.**
+- **The tab of a channel you have not joined keeps its title.**
+- **Photos and quotes in messages fetched to catch up with a chat no longer arrive out of order.**
+- **A quote of a channel's post names the channel, not "Unknown user".**
+- **"Show invite link" shows a public chat's t.me address.**
+- **A photo is shown in a size within the auto-download limit, where it has one, rather than asked about.**
+- **A video's file link gives its picture size, and the original among its sizes is marked as such.**
+- **A video's preview is the cover its sender chose, where there is one, rather than its first frame.**
+- **Animated stickers and custom emoji are transparent around the picture, instead of on a white square.**
+- **Temporary files of images sent and of downloads are no longer left behind.**
+- **Animated stickers no longer write one element past the end of a palette array, and the
+  colours of a part of the picture that has no pixels are no longer left unset.**
+- **A download of a standard file no longer copies unset message fields.**
+
+### Translations
+
+- **Czech, German, Polish and Albanian are complete again.**
+
+### Build
+
+- **libwebp and libpng are no longer needed: stickers are decoded by the front-end's GdkPixbuf.**
+
+### Tests
+
+- **CI runs the tests under Valgrind** (Alpine x86_64, x86 and aarch64; FreeBSD), **and built with
+  AddressSanitizer and UBSan** (Alpine x86_64 and aarch64, and FreeBSD; Alpine has no sanitizer
+  runtime for 32-bit x86).
+
+## 0.9.2 (2026-10-11)
+
+### Behaviour
+
+- **Self-destructing messages are shown by default.** The `show-self-destruct` account
+  option can still turn them off.
+
+### Fixes
+
+- **A front-end that supplies no UI information no longer triggers GLib warnings.**
+- **A plugin built against one TDLib release no longer crashes when run with another.** TDLib's
+  C++ libraries carry no version in their sonames, so nothing stopped the mismatch, and the
+  first update holding a class whose layout had changed brought the front-end down. The plugin
+  now compares the running TDLib's version with the one it was built against and, if they
+  differ, logs a GLib CRITICAL and declines to load.
+
+## 0.9.1 (2026-10-04)
+
+### Fixes
+
+- **A group chat you administer is no longer missing from the buddy list.** The same gap
+  dropped every administrator from the member list of every group chat.
+- **Joining a public group by its link now shows the group.**
+- **Translations are found wherever the plugin is installed, and display correctly in
+  locales that are not UTF-8.**
+
+### Translations
+
+- **Ukrainian**, complete.
+- **Translations are maintained in this repository now**; upstream's Transifex project is
+  not used.
+
+### Build
+
+- **CMake 4 can configure the build**, which it refused while the build asked for CMake 3.2.
+- **Improved portability.**
+
+### Tests
+
+- **The test suite compiles and passes again**, against TDLib 1.8 — 128 tests, all green.
+  It had not built since 1.7.9, and the two fixes above are bugs it found as soon as it ran.
+
+## 0.9.0 (2026-09-27)
+
+This is the first release from this fork. The upstream project,
+[ars3niy/tdlib-purple](https://github.com/ars3niy/tdlib-purple), published 0.8.1 on
+2021-12-17 and has not had a commit since; several good pull requests have been sitting
+open there since 2022.
+
+An enormous thank-you is owed to **Ben Wiederhake**, whose
+[fork](https://github.com/BenWiederhake/tdlib-purple) kept this plugin alive through the
+entire dormancy. Ben did not merely patch it — he acted as the project's de facto
+maintainer, gathering, reviewing and carrying other people's work long after upstream
+stopped answering. A large fraction of what is listed below reached us through his branch,
+and where an item originated with someone else, Ben is the reason it survived at all.
+This release would not exist without him.
+
+### TDLib compatibility
+
+Upstream 0.8.1 required *exactly* TDLib 1.7.9. This release tracks the modern API and
+builds against 1.8.x, tested against **1.8.48**.
+
+- Initial port to the TDLib 1.8 API. Written by **ludo** (upstream PR #154, which is still
+  open and unanswered), and picked up and preserved by **Ben Wiederhake** on his branch,
+  which is how it reached us.
+- Adaptation to TDLib 1.8.48: message origin types, authorization state handling,
+  `tdlibParameters`, reply-to field access, and error handling in
+  `updateMessageSendFailed`.
+- Outgoing file transfers migrated to the current API (`preliminaryUploadFile` and
+  `cancelPreliminaryUploadFile`, replacing the removed `uploadFile` and
+  `cancelUploadFile`). The implementation is **667bdrm**'s, from the TDLib 1.8.34 port —
+  again carried and curated on **Ben Wiederhake**'s branch, and taken from there
+  verbatim so that our two trees stay easy to reconcile. Hats off to both.
+
+### Features
+
+- **Self-destructing messages can now be displayed anyway**, controlled by the
+  `show-self-destruct` account option (off by default). Authored by the ever-generous
+  **Ben Wiederhake** — this is his own work, offered upstream as PR #159 in May 2022 and
+  never merged there. Our thanks for both the feature and the patience.
+- **Videos are shown with their thumbnail**, the preview image the sender's client attaches
+  to a video, animation or round video message. The picture leads the message, with the
+  link to the video directly beneath it and the caption below that; where there is no link
+  yet, the notice about the download follows instead. That includes videos over the
+  auto-download limit, which can now be recognised before deciding whether to download
+  them. Each message waits briefly for its thumbnail, in the same queue that keeps messages
+  in order, so a preview never lands below messages that arrived after it; a thumbnail that
+  takes too long is skipped. Thumbnails in MPEG4 format, which some animations carry, are
+  not shown. The picture is marked up as part of the link, but Pidgin 2.14 activates a
+  link only from its text — an inline image is a widget of its own there — so for now the
+  link beneath the picture is the thing to click.
+- **Group chats you are not a member of are no longer added** to the buddy list, with a
+  corresponding correction to the member-status check. Authored by **Björn Bidar**
+  (upstream PR #163, likewise still open), and delivered to us — with our gratitude —
+  by way of **Ben Wiederhake**'s branch.
+- **Messages of unsupported types now show what they contain.** Below the usual
+  "Unsupported message type" notice comes TDLib's own description of the message — a
+  poll's question and options, a venue's address, a service action's text — shown
+  verbatim in a monospace font, with empty fields and file-cache details left out and
+  long descriptions cut short. It covers every type TDLib can deliver, including ones
+  added after this release, without the plugin having to know them.
+
+### Behaviour
+
+- **History backlog fetching is capped at 80 messages** (was 10000). This stops an
+  endless history-fetch when the plugin loses its position in a chat because the stored
+  last-message id refers to a deleted message, and makes start-up markedly less spammy.
+  Authored by **Mike Kazantsev**, and — once more, and with feeling — brought to us
+  through **Ben Wiederhake**'s branch. Note this affects only the catch-up path; a first
+  fetch of an unread chat remains capped at 100 messages, as it always was.
+
+### Fixes
+
+- **Files whose names contain spaces, non-ASCII letters or other characters a URI cannot
+  carry literally can now be opened from the conversation window.** Such a file was saved
+  correctly, but clicking its link produced *Failed to open URI* and a path full of
+  `%25D0%25A1…%2520…`. The cause is on Pidgin's side: its `file://` link handler strips
+  the scheme and passes the remainder to `purple_notify_uri()` as though it were a plain
+  filesystem path, which is then percent-encoded a second time and handed to `xdg-open`,
+  which — finding no scheme — encodes it once more. Neither encoding the path nor leaving
+  it bare survives that. The link target is now a complete, correctly encoded `file:` URI
+  behind a second `file://` prefix, so that Pidgin strips one and is left holding the URI
+  intact; every opener it may invoke (`xdg-open`, `gnome-open`, `kfmclient`) accepts a URI
+  as readily as a path. Encoding also makes the old refusal to show a file whose path
+  contains a double quote unnecessary, so that has been dropped.
+- **Captions of files received as standard file transfers are no longer lost.** With
+  file downloads set to "Standard file transfers" (the default outside Pidgin), a file in a
+  private chat arrives as a transfer request, which puts nothing in the conversation, and
+  its caption was dropped, along with the reply or "forwarded from" header that goes with
+  it. A caption now appears in the conversation, headers included, as it does for a file
+  shown inline. This bug predates the fork; it is present in 0.8.1 unchanged.
+- **Names containing markup characters are shown correctly.** Values chosen by a remote
+  party — a file name, a contact's display name, a group title, the caption of a photo or
+  file, the text of a quoted message — reach the conversation window, which libpurple
+  renders as HTML, but were inserted without escaping. A name containing `&`, `<` or `>`
+  was mangled, and one containing a tag was swallowed outright. Such values are now
+  escaped wherever they enter conversation markup: the file hyperlink, the four download
+  notices and the two for self-destructing files, the sender prefix shared by every in-chat
+  notice, captions (which are now treated exactly like the text of an ordinary message),
+  the quoted-reply header and its quoted text, the "forwarded from" header, and the
+  group-title-change notice. Text bound for
+  `purple_request_*` dialogs is deliberately left alone, as Pidgin escapes that itself.
+  This bug predates the fork; it is present in 0.8.1 unchanged.
+
+### Build
+
+- **The bundled third-party libraries have been dropped.** The vendored copies of `fmt`
+  and `rlottie` — some 74,000 lines of foreign source carried in-tree — are gone, and both
+  are now located as system packages via `pkg-config`. Distribution packagers no longer
+  need to unbundle them, and security fixes in either library arrive through the system
+  rather than waiting on this repository to re-vendor them.
+- **Builds cleanly when the Telegram VoIP library (`tgvoip`) is absent**, disabling voice
+  call support automatically rather than failing. Can also be forced with the `NoVoip`
+  CMake option.
+- `build_and_install.sh`, a single script that performs the whole build, courtesy of
+  **Ben Wiederhake**.
+
+### Known issues
+
+- **Voice calls are untested, and are absent from any build made without `tgvoip`.** When
+  that library is not found, call support is compiled out entirely (`NoVoip`), which is
+  the case on the machine where this release was prepared and exercised. The call code has
+  therefore not been run at all against the 1.8 API, and should be treated as unverified
+  rather than as working.
+
+---
+
+Earlier history is that of the upstream project; see
+<https://github.com/ars3niy/tdlib-purple> for releases up to and including 0.8.1.

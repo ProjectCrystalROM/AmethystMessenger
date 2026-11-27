@@ -1,0 +1,1598 @@
+#include "buildopt.h"
+#include "supergroup-test.h"
+#include <ctime>
+#include <glib/gstrfuncs.h>
+
+static const char *NotificationWho = " ";
+
+void SupergroupTest::loginWithSupergroup(object_ptr<supergroupFullInfo> fullInfo,
+                                         object_ptr<chatMembers> recentMembers,
+                                         object_ptr<chatMembers> administrators)
+{
+    if (!fullInfo)
+        fullInfo = make_object<supergroupFullInfo>();
+    if (!recentMembers)
+        recentMembers = make_object<chatMembers>();
+    if (!administrators)
+        administrators = make_object<chatMembers>();
+    login(
+        {
+            make_object<updateUser>(makeUser(
+                // Chat member
+                userIds[0],
+                userFirstNames[0],
+                userLastNames[0],
+                "",
+                make_object<userStatusOffline>()
+            )),
+            make_object<updateUser>(makeUser(
+                // Chat member
+                userIds[1],
+                userFirstNames[1],
+                userLastNames[1],
+                "",
+                make_object<userStatusOffline>()
+            )),
+            make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)),
+            make_object<updateNewChat>(makeChat(
+                groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+                nullptr, 0, 0, 0
+            )),
+            makeUpdateChatListMain(groupChatId)
+        },
+        make_object<users>(),
+        make_object<chats>(1, std::vector<int64_t>(1, groupChatId)),
+        {
+            std::make_unique<AddChatEvent>(
+                groupChatPurpleName, groupChatTitle, account, nullptr, nullptr
+            ),
+        },
+        {
+            make_object<getSupergroupFullInfo>(groupId),
+            make_object<getSupergroupMembers>(
+                groupId,
+                make_object<supergroupMembersFilterRecent>(),
+                0,
+                200
+            ),
+            std::move(fullInfo),
+            std::move(recentMembers),
+            make_object<getSupergroupMembers>(
+                groupId,
+                make_object<supergroupMembersFilterAdministrators>(),
+                0, 200
+            ),
+            std::move(administrators)
+        }
+    );
+}
+
+TEST_F(SupergroupTest, AddSupergroupChatAtLogin)
+{
+    loginWithSupergroup();
+}
+
+TEST_F(SupergroupTest, AddSupergroupChatAtLogin_WithMemberList_OpenChatAfterFullInfo)
+{
+    constexpr int     purpleChatId = 1;
+
+    auto fullInfo = make_object<supergroupFullInfo>();
+    fullInfo->description_ = "Description";
+
+    auto members = make_object<chatMembers>();
+    members->members_.push_back(makeChatMember(
+        userIds[1],
+        userIds[1],
+        0,
+        makeChatMemberStatusCreator("", false, true),
+        nullptr
+    ));
+    members->members_.push_back(makeChatMember(
+        selfId,
+        userIds[1],
+        0,
+        make_object<chatMemberStatusMember>(),
+        nullptr
+    ));
+    members->members_.push_back(nullptr);
+
+    auto admins = make_object<chatMembers>();
+    admins->members_.push_back(makeChatMember(
+        userIds[0],
+        userIds[1],
+        0,
+        make_object<chatMemberStatusAdministrator>(),
+        nullptr
+    ));
+    admins->members_.push_back(makeChatMember(
+        userIds[1],
+        userIds[1],
+        0,
+        makeChatMemberStatusCreator("", false, true),
+        nullptr
+    ));
+    admins->members_.push_back(nullptr);
+    loginWithSupergroup(std::move(fullInfo), std::move(members), std::move(admins));
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup((groupChatPurpleName).c_str()));
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "Description", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ChatAddUserEvent(
+            groupChatPurpleName,
+            // By user id, shown by the display name
+            purpleUserName(1),
+            "", PURPLE_CBFLAGS_FOUNDER, false
+        ),
+        ChatAddUserEvent(
+            groupChatPurpleName,
+            // This is us (with + to match account name)
+            "+" + selfPhoneNumber,
+            "", PURPLE_CBFLAGS_NONE, false
+        ),
+        ChatAddUserEvent(
+            groupChatPurpleName,
+            // By user id, shown by the display name
+            purpleUserName(0),
+            "", PURPLE_CBFLAGS_OP, false
+        ),
+        PresentConversationEvent(groupChatPurpleName)
+    );
+    tgl.verifyNoRequests();
+}
+
+TEST_F(SupergroupTest, ExistingSupergroupChatAtLogin)
+{
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup((groupChatPurpleName).c_str()));
+    purple_blist_add_chat(purple_chat_new(account, groupChatTitle.c_str(), components), NULL, NULL);
+    prpl.discardEvents();
+
+    auto chat = makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    );
+    chat->positions_.push_back(make_object<chatPosition>(make_object<chatListMain>(), 1, false, nullptr));
+    login(
+        {
+            make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)),
+            make_object<updateNewChat>(std::move(chat)),
+        },
+        make_object<users>(),
+        make_object<chats>(1, std::vector<int64_t>(1, groupChatId)),
+        {},
+        {
+            make_object<getSupergroupFullInfo>(groupId),
+            make_object<getSupergroupMembers>(
+                groupId,
+                make_object<supergroupMembersFilterRecent>(),
+                0,
+                200
+            ),
+        }
+    );
+}
+
+TEST_F(SupergroupTest, ExistingSupergroupReceiveMessageAtLogin_WithMemberList_OpenChatBeforeFullInfo)
+{
+    constexpr int64_t messageId    = 10001;
+    constexpr int32_t date         = 12345;
+    constexpr int     purpleChatId = 1;
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup((groupChatPurpleName).c_str()));
+    purple_blist_add_chat(purple_chat_new(account, groupChatTitle.c_str(), components), NULL, NULL);
+    prpl.discardEvents();
+
+    auto chat = makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    );
+    chat->positions_.push_back(make_object<chatPosition>(make_object<chatListMain>(), 1, false, nullptr));
+
+    auto fullInfo = make_object<supergroupFullInfo>();
+    fullInfo->description_ = "Description";
+
+    auto members = make_object<chatMembers>();
+    members->members_.push_back(makeChatMember(
+        userIds[1],
+        userIds[1],
+        0,
+        makeChatMemberStatusCreator("", false, true),
+        nullptr
+    ));
+    members->members_.push_back(makeChatMember(
+        selfId,
+        userIds[1],
+        0,
+        make_object<chatMemberStatusMember>(),
+        nullptr
+    ));
+    members->members_.push_back(nullptr);
+
+    auto admins = make_object<chatMembers>();
+    admins->members_.push_back(makeChatMember(
+        userIds[0],
+        userIds[1],
+        0,
+        make_object<chatMemberStatusAdministrator>(),
+        nullptr
+    ));
+    admins->members_.push_back(makeChatMember(
+        userIds[1],
+        userIds[1],
+        0,
+        makeChatMemberStatusCreator("", false, true),
+        nullptr
+    ));
+    admins->members_.push_back(nullptr);
+
+    chatsOpenedAtLogin = {groupChatId};
+    login(
+        {
+            make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)),
+            make_object<updateNewChat>(std::move(chat)),
+            standardUpdateUser(0), // Incoming message will be from this guy
+            standardUpdateUser(1), // Another group member
+            make_object<updateNewMessage>(
+                makeMessage(messageId, userIds[0], groupChatId, false, date, makeTextMessage("Hello"))
+            )
+        },
+        make_object<users>(),
+        make_object<chats>(1, std::vector<int64_t>(1, groupChatId)),
+        {
+            std::make_unique<ServGotJoinedChatEvent>(connection, purpleChatId, groupChatPurpleName,
+                                                     groupChatTitle),
+            std::make_unique<ServGotChatEvent>(connection, purpleChatId, purpleUserName(0),
+                                               "Hello", PURPLE_MESSAGE_RECV, date)
+        },
+        {
+            make_object<getSupergroupFullInfo>(groupId),
+            make_object<getSupergroupMembers>(
+                groupId,
+                make_object<supergroupMembersFilterRecent>(),
+                0,
+                200
+            ),
+            make_object<viewMessages>(groupChatId, std::vector<int64_t>(1, messageId), nullptr, true),
+            std::move(fullInfo),
+            std::move(members),
+            make_object<getSupergroupMembers>(
+                groupId,
+                make_object<supergroupMembersFilterAdministrators>(),
+                0, 200
+            ),
+            std::move(admins)
+        },
+        {
+            std::make_unique<ChatSetTopicEvent>(groupChatPurpleName, "Description", ""),
+            std::make_unique<ChatClearUsersEvent>(groupChatPurpleName),
+            std::make_unique<ChatAddUserEvent>(
+                groupChatPurpleName,
+                // By user id, shown by the display name
+                purpleUserName(1),
+                "", PURPLE_CBFLAGS_FOUNDER, false
+            ),
+            std::make_unique<ChatAddUserEvent>(
+                groupChatPurpleName,
+                // This is us (with + to match account name)
+                "+" + selfPhoneNumber,
+                "", PURPLE_CBFLAGS_NONE, false
+            ),
+            std::make_unique<ChatAddUserEvent>(
+                groupChatPurpleName,
+                // By user id, shown by the display name
+                purpleUserName(0),
+                "", PURPLE_CBFLAGS_OP, false
+            ),
+            std::make_unique<AccountSetAliasEvent>(account, selfFirstName + " " + selfLastName),
+            std::make_unique<ShowAccountEvent>(account)
+        }
+    );
+}
+
+TEST_F(SupergroupTest, DeleteSupergroup_Fail)
+{
+    loginWithSupergroup();
+    // Ours to delete for all
+    {
+        auto chat = makeChat(groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+                             nullptr, 0, 0, 0);
+        chat->can_be_deleted_for_all_users_ = true;
+        tgl.update(make_object<updateNewChat>(std::move(chat)));
+        tgl.update(makeUpdateChatListMain(groupChatId));
+    }
+    prpl.discardEvents();
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    // With others in it: for everyone, or only for us, is asked
+    nodeMenuAction(&chat->node, actions, "Delete group");
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 3));
+    prpl.requestedAction("_Cancel");
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+
+    nodeMenuAction(&chat->node, actions, "Delete group");
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 3));
+    prpl.requestedAction("For _everyone");
+    {
+        auto files = make_object<optimizeStorage>();
+        files->chat_ids_ = {groupChatId};
+        tgl.verifyRequests({
+            make_object<deleteChatHistory>(groupChatId, true, false),
+            std::move(files),
+            make_object<deleteChat>(groupChatId)
+        });
+    }
+    prpl.verifyEvents(RemoveChatEvent(groupChatPurpleName, ""));
+    tgl.reply(make_object<error>(100, "error"));
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, DeleteOwnSupergroupForSelf)
+{
+    loginWithSupergroup();
+    {
+        auto chat = makeChat(groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+                             nullptr, 0, 0, 0);
+        chat->can_be_deleted_for_all_users_ = true;
+        tgl.update(make_object<updateNewChat>(std::move(chat)));
+        tgl.update(makeUpdateChatListMain(groupChatId));
+    }
+    prpl.discardEvents();
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    // Kept for the others: we leave it, with nothing of it kept here
+    nodeMenuAction(&chat->node, actions, "Delete group");
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 3));
+    prpl.requestedAction("For _me only");
+    {
+        auto files = make_object<optimizeStorage>();
+        files->chat_ids_ = {groupChatId};
+        tgl.verifyRequests({
+            make_object<deleteChatHistory>(groupChatId, true, false),
+            std::move(files),
+            make_object<leaveChat>(groupChatId)
+        });
+    }
+    prpl.verifyEvents(RemoveChatEvent(groupChatPurpleName, ""));
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, LeaveSupergroup)
+{
+    const int32_t date         = 12345;
+    const int64_t messageId    = 10001;
+    constexpr int purpleChatId = 1;
+
+    loginWithSupergroup();
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    nodeMenuAction(&chat->node, actions, "Leave group");
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 2));
+    prpl.requestedAction("_No");
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+
+    nodeMenuAction(&chat->node, actions, "Leave group");
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 2));
+    prpl.requestedAction("_Yes");
+    // Only left, nothing of it deleted
+    tgl.verifyRequest(leaveChat(groupChatId));
+
+    tgl.update(makeUpdateRemoveFromChatList(groupChatId, make_object<chatListMain>()));
+    prpl.verifyEvents(RemoveChatEvent(groupChatPurpleName, ""));
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusBanned>(0), 0)));
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 0)));
+
+    prpl.verifyNoEvents();
+    // Someone else's leaving is none of ours any more
+    tgl.update(make_object<updateNewMessage>(
+        makeMessage(messageId - 1, userIds[0], groupChatId, false, date,
+                    make_object<messageChatDeleteMember>(userIds[0]))
+    ));
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+
+    tgl.update(make_object<updateNewMessage>(
+        makeMessage(messageId, selfId, groupChatId, true, date,
+                    make_object<messageChatDeleteMember>(selfId))
+    ));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL),
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ConvSetTitleEvent(groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                               selfFirstName + " " + selfLastName + " left",
+                               PURPLE_MESSAGE_SYSTEM, date)
+    );
+
+    // There is a check that fails message sending if we are not a group member
+    ASSERT_LT(pluginInfo().chat_send(connection, purpleChatId, "message", PURPLE_MESSAGE_SEND), 0);
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, GetInviteLink)
+{
+    constexpr int     purpleChatId = 1;
+    loginWithSupergroup();
+    // Only those allowed to invite can make an invitation
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, makeCreatorStatus(), 2)));
+    prpl.verifyNoEvents();
+
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    nodeMenuAction(&chat->node, actions, "Show invite link");
+    tgl.verifyRequest(*makeInviteLinkRequest(groupChatId));
+
+    tgl.reply(make_object<error>(100, "error"));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ConversationWriteEvent(
+            groupChatPurpleName, NotificationWho,
+            "Cannot generate invite link: code 100 (error)",
+            PURPLE_MESSAGE_SYSTEM, 0
+        )
+    );
+
+    nodeMenuAction(&chat->node, actions, "Show invite link");
+    tgl.verifyRequest(*makeInviteLinkRequest(groupChatId));
+    auto fullInfo = make_object<supergroupFullInfo>();
+    fullInfo->invite_link_ = makeChatInviteLink("http://invite");
+    tgl.update(make_object<updateSupergroupFullInfo>(
+        groupChatId,
+        std::move(fullInfo)
+    ));
+    prpl.verifyNoEvents();
+
+    tgl.reply(makeChatInviteLink("http://invite"));
+    prpl.verifyEvents(
+        ConversationWriteEvent(
+            groupChatPurpleName, NotificationWho,
+            "http://invite",
+            PURPLE_MESSAGE_SYSTEM, 0
+        )
+    );
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, GetInviteLink_Public)
+{
+    loginWithSupergroup();
+    auto group = makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2);
+    group->usernames_ = make_object<usernames>();
+    group->usernames_->active_usernames_.push_back("somechannel");
+    tgl.update(make_object<updateSupergroup>(std::move(group)));
+    prpl.verifyNoEvents();
+
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    // Its address, which needs no invitation, nor anyone's rights to make one
+    nodeMenuAction(&chat->node, actions, "Show invite link");
+    tgl.verifyNoRequests();
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, 1, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho, "https://t.me/somechannel",
+                               PURPLE_MESSAGE_SYSTEM, 0)
+    );
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, GetInviteLink_NotAllowed)
+{
+    loginWithSupergroup();
+
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    GList *actions = pluginInfo().blist_node_menu(&chat->node);
+
+    nodeMenuAction(&chat->node, actions, "Show invite link");
+    tgl.verifyNoRequests();
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, 1, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                               "This chat has no public link or invite link, and only its administrators can create one",
+                               PURPLE_MESSAGE_SYSTEM, 0)
+    );
+
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+}
+
+TEST_F(SupergroupTest, JoinByLink_InvalidLink1)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("http://example.com"));
+
+    pluginInfo().join_chat(connection, components);
+    // Not a join link nor a group link - fail immediately
+    tgl.verifyNoRequests();
+
+    g_hash_table_destroy(components);
+}
+
+TEST_F(SupergroupTest, JoinByLink_InvalidLink2)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("https://t.me/invalid/link"));
+
+    pluginInfo().join_chat(connection, components);
+    // Not a join link nor a group link - fail immediately
+    tgl.verifyNoRequests();
+
+    g_hash_table_destroy(components);
+}
+
+TEST_F(SupergroupTest, JoinByPublicLink1)
+{
+    const char *const NAME         = "groupname";
+    const char *const LINK         = "https://t.me/groupname";
+    constexpr int     purpleChatId = 1;
+
+    login();
+
+    // As if "Add chat" function in pidgin was used
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup(LINK));
+
+    PurpleChat *chat = purple_chat_new(account, "old chat", components);
+    purple_blist_add_chat(chat, NULL, NULL);
+    prpl.discardEvents();
+
+    // And now that chat is being joined
+    pluginInfo().join_chat(connection, components);
+
+    tgl.verifyRequest(searchPublicChat(NAME));
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    tgl.reply(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    ));
+
+    uint64_t joinRequestId = tgl.verifyRequest(joinChat(groupChatId));
+    prpl.verifyNoEvents();
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    tgl.update(makeUpdateChatList(groupChatId, make_object<chatListMain>()));
+    prpl.verifyEvents(AddChatEvent(
+        groupChatPurpleName, groupChatTitle, account, NULL, NULL
+    ));
+    tgl.verifyRequests({
+        make_object<getSupergroupFullInfo>(groupId),
+        make_object<getSupergroupMembers>(
+            groupId,
+            make_object<supergroupMembersFilterRecent>(),
+            0,
+            200
+        ),
+    });
+
+    tgl.reply(joinRequestId, makeChatJoined(groupChatId, make_object<ok>()));
+    prpl.verifyEvents(
+        RemoveChatEvent("", LINK),
+        ServGotJoinedChatEvent(
+            connection, purpleChatId, groupChatPurpleName, groupChatTitle
+        )
+    );
+}
+
+TEST_F(SupergroupTest, JoinByPublicLink2)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("https://t.me/s/groupname"));
+
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    tgl.verifyRequest(searchPublicChat("groupname"));
+}
+
+TEST_F(SupergroupTest, JoinByPublicLink_SearchFail)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("https://t.me/s/groupname"));
+
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    tgl.verifyRequest(searchPublicChat("groupname"));
+    tgl.reply(make_object<error>(100, "error"));
+
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+}
+
+TEST_F(SupergroupTest, JoinByPublicLink_NotGroupChat)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("https://t.me/s/groupname"));
+
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    tgl.verifyRequest(searchPublicChat("groupname"));
+
+    tgl.update(make_object<updateUser>(makeUser(
+        userIds[0],
+        userFirstNames[0],
+        userLastNames[0],
+        "",
+        make_object<userStatusOffline>()
+    )));
+    tgl.update(standardPrivateChat(0));
+    tgl.reply(std::move(standardPrivateChat(0)->chat_));
+
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+}
+
+TEST_F(SupergroupTest, JoinByPublicLink_JoinFail)
+{
+    login();
+
+    GHashTable *components = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(""));
+    g_hash_table_insert(components, (char *)"link", g_strdup("https://t.me/s/groupname"));
+
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    tgl.verifyRequest(searchPublicChat("groupname"));
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    tgl.reply(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+        nullptr, 0, 0, 0
+    ));
+
+    tgl.verifyRequest(joinChat(groupChatId));
+    tgl.reply(make_object<error>(100, "error"));
+    prpl.verifyNoEvents();
+}
+
+TEST_F(SupergroupTest, ReceiveChannelPost)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    loginWithSupergroup();
+
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+
+    tgl.verifyRequest(viewMessages(
+        groupChatId,
+        {messageId}, nullptr,
+        true
+    ));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ServGotChatEvent(connection, purpleChatId, "Channel post",
+                         "Hello", PURPLE_MESSAGE_RECV, date)
+    );
+
+}
+
+TEST_F(SupergroupTest, ChannelPostNotice)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    constexpr int32_t fileId       = 1234;
+    purple_account_set_string(account, "media-size-threshold", "0.5");
+    purple_account_set_string(account, "media-handling-behavior", "discard");
+    loginWithSupergroup();
+
+    // A file too big to be fetched unasked, as a picture no longer is told of
+    auto message = makeMessage(messageId, 0, groupChatId, false, date,
+                               makeMessageDocument("doc.file.name", "mime/type", makeFile(fileId, 655360), "caption"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    // Every message in a channel is a channel post, which the notice need not repeat
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "caption", PURPLE_MESSAGE_RECV, date),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                               "Ignoring doc.file.name [mime/type] download (purple_str_size_to_units)",
+                               PURPLE_MESSAGE_SYSTEM, date)
+    );
+}
+
+TEST_F(SupergroupTest, ChannelPostEdited)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int32_t editDate     = 12400;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    loginWithSupergroup();
+
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("old"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "old", PURPLE_MESSAGE_RECV, date)
+    );
+
+    tgl.update(makeUpdateMessageContent(groupChatId, messageId, makeTextMessage("new")));
+    tgl.verifyRequest(getMessage(groupChatId, messageId));
+    auto edited = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("new"));
+    edited->is_channel_post_ = true;
+    edited->edit_date_       = editDate;
+    tgl.reply(std::move(edited));
+
+    // "Channel post" is no one who could have edited it
+    char   sentAt[80];
+    time_t timestamp = date;
+    strftime(sentAt, sizeof(sentAt), "%x %X", localtime(&timestamp));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                                             std::string("The message from ") + sentAt + " was edited: new",
+                                             PURPLE_MESSAGE_SYSTEM, editDate));
+    tgl.verifyNoRequests();
+}
+
+TEST_F(SupergroupTest, ChannelPostQuotesChannelPost)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int64_t quotedId     = 9000;
+    constexpr int     purpleChatId = 1;
+    loginWithSupergroup();
+
+    // Both sent by the channel, as channels' posts are
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("reply"));
+    message->is_channel_post_ = true;
+    message->sender_id_       = make_object<messageSenderChat>(groupChatId);
+    message->reply_to_        = makeReplyTo(quotedId);
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(getMessage(groupChatId, quotedId));
+
+    auto quoted = makeMessage(quotedId, 0, groupChatId, false, date - 1, makeTextMessage("original"));
+    quoted->is_channel_post_ = true;
+    quoted->sender_id_       = make_object<messageSenderChat>(groupChatId);
+    tgl.reply(std::move(quoted));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ServGotChatEvent(connection, purpleChatId, "Channel post",
+                         "<b>&gt; " + groupChatTitle + " wrote:</b>\n&gt; original\nreply",
+                         PURPLE_MESSAGE_RECV, date)
+    );
+}
+
+// TODO: test non-user member
+
+TEST_F(SupergroupTest, ForeignChannel)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    login();
+
+    // A channel TDLib knows of, such as one linked to a group we are in, without our being a
+    // member of it: its posts are none of ours
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    prpl.verifyNoEvents();
+
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    prpl.verifyNoEvents();
+    tgl.verifyNoRequests();
+
+    // ...until we join it
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    tgl.update(makeUpdateChatListMain(groupChatId));
+    prpl.verifyEvents(AddChatEvent(groupChatPurpleName, groupChatTitle, account, NULL, NULL));
+    tgl.verifyRequests({
+        make_object<getSupergroupFullInfo>(groupId),
+        make_object<getSupergroupMembers>(groupId, make_object<supergroupMembersFilterRecent>(), 0, 200),
+    });
+
+    message = makeMessage(messageId + 1, 0, groupChatId, false, date, makeTextMessage("Welcome"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId + 1}, nullptr, true));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "Welcome", PURPLE_MESSAGE_RECV, date)
+    );
+
+    // ...and once we leave it, its posts come only while its tab is open, read as the phone app
+    // shows a channel left while it is still in view
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    prpl.verifyNoEvents();
+    message = makeMessage(messageId + 2, 0, groupChatId, false, date, makeTextMessage("Still here"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId + 2}, nullptr, true));
+    prpl.verifyEvents(ServGotChatEvent(connection, purpleChatId, "Channel post", "Still here", PURPLE_MESSAGE_RECV,
+                                       date));
+
+    // Its tab closed, they are none of ours again
+    purple_conversation_destroy(purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT,
+                                                                      groupChatPurpleName.c_str(), account));
+    prpl.discardEvents();
+    message = makeMessage(messageId + 3, 0, groupChatId, false, date, makeTextMessage("Gone"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    prpl.verifyNoEvents();
+    tgl.verifyNoRequests();
+}
+
+// A photo in a channel not joined, shown as it comes before it has an entry, is not downloaded
+// unasked, whatever the account's setting
+TEST_F(SupergroupTest, UnjoinedChannelPhotoNotDownloaded)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    constexpr int32_t fileId    = 1234;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    ASSERT_EQ(nullptr, purple_blist_find_chat(account, groupChatPurpleName.c_str()));
+
+    std::vector<object_ptr<photoSize>> sizes;
+    sizes.push_back(makePhotoSize(::makeFile(fileId, 10000), 640, 480));
+    auto message = makeMessage(messageId, 0, groupChatId, false, date,
+        makeMessagePhoto(makePhotoWithSizes(std::move(sizes)), makeFormattedText("photo"), false, false, false));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL),
+        ServGotJoinedChatEvent(connection, 1, groupChatPurpleName, groupChatTitle),
+        ConvSetTitleEvent(groupChatPurpleName, groupChatTitle),
+#ifndef NoPidgin
+        ServGotChatEvent(connection, 1, "Channel post", "[photo]\nphoto", PURPLE_MESSAGE_RECV, date)
+#else
+        ServGotChatEvent(connection, 1, "Channel post", "photo", PURPLE_MESSAGE_RECV, date),
+        ConversationWriteEvent(groupChatPurpleName, " ", "Ignoring photo download (purple_str_size_to_units)",
+                               PURPLE_MESSAGE_SYSTEM, date)
+#endif
+    );
+}
+
+// A channel not joined, with messages in Pidgin's log, has its entry for this run, unless deleted
+TEST_F(SupergroupTest, LoggedUnjoinedChannel)
+{
+    gchar *logDir = g_build_filename(purple_user_dir(), "logs", "telegram", ("+" + selfPhoneNumber).c_str(),
+                                     (groupChatPurpleName + ".chat").c_str(), NULL);
+    ASSERT_EQ(0, g_mkdir_with_parents(logDir, 0700));
+    gchar *logFile = g_build_filename(logDir, "2026-11-24.120000-0500EST.html", NULL);
+    ASSERT_TRUE(g_file_set_contents(logFile, "<html></html>", -1, NULL));
+    // An older version's, named by a title that begins like the chat's name: not the chat's
+    gchar *titledDir = g_build_filename(purple_user_dir(), "logs", "telegram", ("+" + selfPhoneNumber).c_str(),
+                                        (groupChatPurpleName + "-notes.chat").c_str(), NULL);
+    ASSERT_EQ(0, g_mkdir_with_parents(titledDir, 0700));
+    login();
+    tgl.verifyRequest(getChat(groupChatId));
+    tgl.verifyNoRequests();
+    rmdir(titledDir);
+    g_free(titledDir);
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    prpl.verifyNoEvents();
+    tgl.reply(makeChat(groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle, nullptr, 0, 0, 0));
+    prpl.verifyEvents(AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL));
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+    ASSERT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+
+    // Opened from it, the channel is shown, to be read
+    GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(groupChatPurpleName.c_str()));
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    prpl.verifyEvents(ServGotJoinedChatEvent(connection, 1, groupChatPurpleName, groupChatTitle),
+                      PresentConversationEvent(groupChatPurpleName));
+
+    // Deleted from its menu, nothing of it stays here: TDLib's messages and files of it, its tab and
+    // entry, its log. Not joined, it is not deleted from Telegram.
+    GList *actions = pluginInfo().blist_node_menu(&purpleChat->node);
+    nodeMenuAction(&purpleChat->node, actions, "Delete group");
+    g_list_free_full(actions, (GDestroyNotify)purple_menu_action_free);
+    prpl.verifyEvents(RequestActionEvent(connection, account, NULL, NULL, 2));
+    prpl.requestedAction("_Yes");
+    {
+        auto files = make_object<optimizeStorage>();
+        files->chat_ids_ = {groupChatId};
+        tgl.verifyRequests({
+            make_object<deleteChatHistory>(groupChatId, true, false),
+            std::move(files)
+        });
+    }
+    prpl.verifyEvents(RemoveChatEvent(groupChatPurpleName, ""));
+    EXPECT_EQ(nullptr, purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT, groupChatPurpleName.c_str(),
+                                                             account));
+    EXPECT_FALSE(g_file_test(logFile, G_FILE_TEST_EXISTS));
+    EXPECT_FALSE(g_file_test(logDir, G_FILE_TEST_EXISTS));
+    remove(logFile);
+    rmdir(logDir);
+    g_free(logFile);
+    g_free(logDir);
+}
+
+TEST_F(SupergroupTest, UnjoinedChannelShownOnRequest)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    prpl.verifyNoEvents();
+
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    // An entry in the buddy list for this run only, which Pidgin takes the tab's title from
+    PurpleGroup *notJoined = purple_find_group("Telegram: not joined");
+    ASSERT_NE(nullptr, notJoined);
+    ASSERT_TRUE(purple_blist_node_get_flags(&notJoined->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    prpl.verifyEvents(
+        AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL),
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ConvSetTitleEvent(groupChatPurpleName, groupChatTitle),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "Hello", PURPLE_MESSAGE_RECV, date)
+    );
+    tgl.verifyNoRequests();
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+    ASSERT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+
+    // Pidgin, updating the tab, finds it
+    PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT,
+                                                                     groupChatPurpleName.c_str(), account);
+    ASSERT_NE(nullptr, conv);
+    purple_conversation_autoset_title(conv);
+    prpl.verifyEvents(ConvSetTitleEvent(groupChatPurpleName, groupChatTitle));
+
+    // Telegram's news of the chat leave the entry be, but for a new title, which it takes
+    const std::string newTitle = "Renamed channel";
+    tgl.update(makeUpdateChatTitle(groupChatId, newTitle));
+    ASSERT_EQ(purpleChat, purple_blist_find_chat(account, groupChatPurpleName.c_str()));
+    prpl.verifyEvents(AliasChatEvent(groupChatPurpleName, newTitle));
+    tgl.verifyNoRequests();
+
+    // Joined, it is ours to keep, and moves to where joined chats are
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    ASSERT_FALSE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    prpl.verifyEvents(AddChatEvent(groupChatPurpleName, newTitle, account, NULL, NULL));
+}
+
+// Moved out of "Telegram: not joined" into a group of ours, a channel is joined, and kept there
+TEST_F(SupergroupTest, UnjoinedChannelMovedJoined)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL),
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ConvSetTitleEvent(groupChatPurpleName, groupChatTitle),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "Hello", PURPLE_MESSAGE_RECV, date)
+    );
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+
+    purple_blist_add_chat(purpleChat, &standardPurpleGroup, NULL);
+    prpl.verifyEvents(AddChatEvent(groupChatPurpleName, groupChatTitle, account, &standardPurpleGroup, NULL));
+    tgl.verifyRequest(joinChat(groupChatId));
+    // Not kept until joined, which may be refused
+    EXPECT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    tgl.reply(makeChatJoined(groupChatId, make_object<ok>()));
+    // Its tab is open already; none is opened for it otherwise
+    prpl.verifyNoEvents();
+    EXPECT_FALSE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    EXPECT_EQ(&standardPurpleGroup, purple_chat_get_group(purpleChat));
+    tgl.verifyNoRequests();
+}
+
+#if TDLIB_API_CHAT_JOIN_RESULT
+// Moved into a group of ours, a channel that takes requests to join is asked: not joined yet, and not
+// kept
+TEST_F(SupergroupTest, UnjoinedChannelMovedAsked)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.discardEvents();
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+
+    purple_blist_add_chat(purpleChat, &standardPurpleGroup, NULL);
+    prpl.discardEvents();
+    tgl.verifyRequest(joinChat(groupChatId));
+    tgl.reply(make_object<chatJoinResultRequestSent>());
+    prpl.verifyNoEvents();
+    tgl.verifyNoRequests();
+    EXPECT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+}
+#endif
+
+// Moved into a group of ours, a channel that will not have us back is back where it was
+TEST_F(SupergroupTest, UnjoinedChannelMovedRefused)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.discardEvents();
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+    PurpleGroup *notJoined = purple_chat_get_group(purpleChat);
+
+    purple_blist_add_chat(purpleChat, &standardPurpleGroup, NULL);
+    prpl.discardEvents();
+    tgl.verifyRequest(joinChat(groupChatId));
+    tgl.reply(makeError(400, "Can't return to kicked from chat"));
+    prpl.verifyEvents(AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL));
+    tgl.verifyNoRequests();
+    EXPECT_EQ(notJoined, purple_chat_get_group(purpleChat));
+    EXPECT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+}
+
+// A group by our name, though saved, as by an earlier version, is ours: a chat put in it is not moved
+TEST_F(SupergroupTest, UnjoinedChannelInSavedGroupNotJoined)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    login();
+    purple_account_set_bool(account, "show-unjoined-chats", TRUE);
+    purple_blist_add_group(purple_group_new(notJoinedGroup()->name), NULL);
+
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusLeft>(), 2)));
+    tgl.update(make_object<updateNewChat>(makeChat(
+        groupChatId, make_object<chatTypeSupergroup>(groupId, true), groupChatTitle,
+        nullptr, 0, 0, 0
+    )));
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Hello"));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        AddChatEvent(groupChatPurpleName, groupChatTitle, account, notJoinedGroup(), NULL),
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ConvSetTitleEvent(groupChatPurpleName, groupChatTitle),
+        ServGotChatEvent(connection, purpleChatId, "Channel post", "Hello", PURPLE_MESSAGE_RECV, date)
+    );
+    PurpleChat *purpleChat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, purpleChat);
+    EXPECT_TRUE(purple_blist_node_get_flags(&purpleChat->node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    tgl.verifyNoRequests();
+}
+
+// Requests and updates of the lookups, built by their fields' names
+static object_ptr<getChat> makeGetChat(int64_t chatId)
+{
+    auto request = make_object<getChat>();
+    request->chat_id_ = chatId;
+    return request;
+}
+
+static object_ptr<searchPublicChat> makeSearchPublicChat(const std::string &username)
+{
+    auto request = make_object<searchPublicChat>();
+    request->username_ = username;
+    return request;
+}
+
+static object_ptr<updateSupergroup> makeUpdateSupergroup(object_ptr<supergroup> group)
+{
+    auto update = make_object<updateSupergroup>();
+    update->supergroup_ = std::move(group);
+    return update;
+}
+
+static object_ptr<updateNewChat> makeUpdateNewChat(object_ptr<chat> newChat)
+{
+    auto update = make_object<updateNewChat>();
+    update->chat_ = std::move(newChat);
+    return update;
+}
+
+static object_ptr<chatPosition> makeMainListPosition()
+{
+    auto position = make_object<chatPosition>();
+    position->list_  = make_object<chatListMain>();
+    position->order_ = 1;
+    return position;
+}
+
+static object_ptr<getSupergroupMembers> makeGetRecentMembers(int64_t groupId)
+{
+    auto request = make_object<getSupergroupMembers>();
+    request->supergroup_id_ = groupId;
+    request->filter_        = make_object<supergroupMembersFilterRecent>();
+    request->limit_         = 200;
+    return request;
+}
+
+static object_ptr<getSupergroupFullInfo> makeGetSupergroupFullInfo(int64_t groupId)
+{
+    auto request = make_object<getSupergroupFullInfo>();
+    request->supergroup_id_ = groupId;
+    return request;
+}
+
+TEST_F(SupergroupTest, PublicNameSaved)
+{
+    loginWithSupergroup();
+    PurpleChat *chat = purple_blist_find_chat(account, groupChatPurpleName.c_str());
+    ASSERT_NE(nullptr, chat);
+    EXPECT_EQ(nullptr, purple_blist_node_get_string(&chat->node, "tdlib-public-name"));
+
+    auto group = makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2);
+    group->usernames_ = make_object<usernames>();
+    group->usernames_->active_usernames_.push_back("somechannel");
+    tgl.update(makeUpdateSupergroup(std::move(group)));
+    ASSERT_NE(nullptr, purple_blist_node_get_string(&chat->node, "tdlib-public-name"));
+    EXPECT_EQ(std::string("somechannel"), purple_blist_node_get_string(&chat->node, "tdlib-public-name"));
+
+    // Given up
+    tgl.update(makeUpdateSupergroup(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    EXPECT_EQ(nullptr, purple_blist_node_get_string(&chat->node, "tdlib-public-name"));
+    prpl.verifyNoEvents();
+}
+
+TEST_F(SupergroupTest, UnknownChatLookedUp)
+{
+    // In the buddy list from before, but not told of by TDLib
+    GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(groupChatPurpleName.c_str()));
+    PurpleChat *purpleChat = purple_chat_new(account, groupChatTitle.c_str(), components);
+    purple_blist_add_chat(purpleChat, NULL, NULL);
+    purple_blist_node_set_string(&purpleChat->node, "tdlib-public-name", "somechannel");
+    prpl.discardEvents();
+    login();
+
+    components = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(groupChatPurpleName.c_str()));
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    prpl.discardEvents();
+
+    // Not stored, but found by its public name
+    uint64_t requestId = tgl.verifyRequest(*makeGetChat(groupChatId));
+    tgl.reply(requestId, makeError(400, "Chat not found"));
+    requestId = tgl.verifyRequest(*makeSearchPublicChat("somechannel"));
+    tgl.update(makeUpdateSupergroup(makeSupergroup(groupId, make_object<chatMemberStatusMember>(), 2)));
+    auto chat = makeChat(groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+                         nullptr, 0, 0, 0);
+    chat->positions_.push_back(makeMainListPosition());
+    tgl.update(makeUpdateNewChat(std::move(chat)));
+    tgl.verifyRequests({makeGetSupergroupFullInfo(groupId), makeGetRecentMembers(groupId)});
+    tgl.reply(requestId, makeChat(groupChatId, make_object<chatTypeSupergroup>(groupId, false), groupChatTitle,
+                                  nullptr, 0, 0, 0));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, 1, groupChatPurpleName, groupChatTitle),
+        PresentConversationEvent(groupChatPurpleName)
+    );
+}
+
+TEST_F(SupergroupTest, UnknownChatTakenName)
+{
+    GHashTable *components = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(groupChatPurpleName.c_str()));
+    PurpleChat *purpleChat = purple_chat_new(account, groupChatTitle.c_str(), components);
+    purple_blist_add_chat(purpleChat, NULL, NULL);
+    purple_blist_node_set_string(&purpleChat->node, "tdlib-public-name", "somechannel");
+    prpl.discardEvents();
+    login();
+
+    components = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(components, (char *)"id", g_strdup(groupChatPurpleName.c_str()));
+    pluginInfo().join_chat(connection, components);
+    g_hash_table_destroy(components);
+    prpl.discardEvents();
+
+    // The public name now another chat's: not joined
+    uint64_t requestId = tgl.verifyRequest(*makeGetChat(groupChatId));
+    tgl.reply(requestId, makeError(400, "Chat not found"));
+    requestId = tgl.verifyRequest(*makeSearchPublicChat("somechannel"));
+    tgl.reply(requestId, makeChat(groupChatId + 1, make_object<chatTypeSupergroup>(groupId + 1, false), "Other",
+                                  nullptr, 0, 0, 0));
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+}
+
+// A message pinned in a channel, by nobody named: in words all the same
+TEST_F(SupergroupTest, ChannelPinInWords)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10001;
+    constexpr int     purpleChatId = 1;
+    loginWithSupergroup();
+
+    auto pinned = make_object<messagePinMessage>();
+    pinned->message_id_ = 10000;
+    auto message = makeMessage(messageId, 0, groupChatId, false, date, std::move(pinned));
+    message->is_channel_post_ = true;
+    tgl.update(make_object<updateNewMessage>(std::move(message)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho, "A message was pinned", PURPLE_MESSAGE_SYSTEM, date)
+    );
+}
+
+// The time a message was sent at, as a notice about it shows it (formatMessageTime)
+static std::string deletedMessageTime(time_t timestamp)
+{
+    char buf[80];
+    strftime(buf, sizeof(buf), "%x %X", localtime(&timestamp));
+    return buf;
+}
+
+void SupergroupTest::receiveMemberMessage(int64_t messageId, unsigned userIndex, int32_t date, bool first)
+{
+    constexpr int purpleChatId = 1;
+    tgl.update(make_object<updateNewMessage>(
+        makeMessage(messageId, userIds[userIndex], groupChatId, false, date, makeTextMessage("Hello"))
+    ));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    if (first)
+        prpl.verifyEvents(
+            ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+            ChatSetTopicEvent(groupChatPurpleName, "", ""),
+            ChatClearUsersEvent(groupChatPurpleName),
+            ServGotChatEvent(connection, purpleChatId, purpleUserName(userIndex), "Hello", PURPLE_MESSAGE_RECV, date)
+        );
+    else
+        prpl.verifyEvents(ServGotChatEvent(connection, purpleChatId, purpleUserName(userIndex), "Hello",
+                                           PURPLE_MESSAGE_RECV, date));
+}
+
+// The request for the latest deletions in the log of events
+static object_ptr<getChatEventLog> makeDeletionsLogRequest(int64_t chatId, int32_t limit)
+{
+    auto filters = make_object<chatEventLogFilters>();
+    filters->message_deletions_ = true;
+    auto request = make_object<getChatEventLog>();
+    request->chat_id_ = chatId;
+    request->limit_   = limit;
+    request->filters_ = std::move(filters);
+    return request;
+}
+
+// A deletion as the log of events has it: the message, and who deleted it
+static object_ptr<chatEvent> makeDeletionEvent(int64_t eventId, int32_t date, object_ptr<MessageSender> &&deleter,
+                                               object_ptr<message> &&deleted)
+{
+    auto action = make_object<chatEventMessageDeleted>();
+    action->message_ = std::move(deleted);
+    auto event = make_object<chatEvent>();
+    event->id_        = eventId;
+    event->date_      = date;
+    event->member_id_ = std::move(deleter);
+    event->action_    = std::move(action);
+    return event;
+}
+
+static object_ptr<chatEvents> makeDeletionEvents(object_ptr<chatEvent> &&event)
+{
+    auto events = make_object<chatEvents>();
+    events->events_.push_back(std::move(event));
+    return events;
+}
+
+// An administrator reads who deleted a message in the log of events
+TEST_F(SupergroupTest, MessageDeletedByAnother)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    prpl.discardEvents();
+    receiveMemberMessage(messageId, 0, date, true);
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    prpl.verifyNoEvents();
+
+    tgl.reply(requestId, makeDeletionEvents(makeDeletionEvent(1, date + 60, make_object<messageSenderUser>(userIds[1]),
+        makeMessage(messageId, userIds[0], groupChatId, false, date, makeTextMessage("Hello")))));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        userFirstNames[1] + " " + userLastNames[1] + " deleted the message " + userFirstNames[0] + " " +
+        userLastNames[0] + " sent at " + deletedMessageTime(date), PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// The sender deleted it
+TEST_F(SupergroupTest, MessageDeletedBySender)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    prpl.discardEvents();
+    receiveMemberMessage(messageId, 0, date, true);
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    tgl.reply(requestId, makeDeletionEvents(makeDeletionEvent(1, date + 60, make_object<messageSenderUser>(userIds[0]),
+        makeMessage(messageId, userIds[0], groupChatId, false, date, makeTextMessage("Hello")))));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        userFirstNames[0] + " " + userLastNames[0] + " deleted their message sent at " + deletedMessageTime(date),
+        PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// The sender deleted it after changing their name: who they are, not their names, tell it was theirs
+TEST_F(SupergroupTest, MessageDeletedBySenderRenamed)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    prpl.discardEvents();
+    receiveMemberMessage(messageId, 0, date, true);
+    tgl.update(make_object<updateUser>(makeUser(userIds[0], "Renamed", userLastNames[0], "",
+                                                make_object<userStatusOffline>())));
+    prpl.discardEvents();
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    tgl.reply(requestId, makeDeletionEvents(makeDeletionEvent(1, date + 60, make_object<messageSenderUser>(userIds[0]),
+        makeMessage(messageId, userIds[0], groupChatId, false, date, makeTextMessage("Hello")))));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        "Renamed " + userLastNames[0] + " deleted their message sent at " + deletedMessageTime(date),
+        PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// We deleted it, and are named as our own messages are
+TEST_F(SupergroupTest, MessageDeletedByUs)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    purple_account_set_alias(account, "Me");
+    prpl.discardEvents();
+    receiveMemberMessage(messageId, 0, date, true);
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    tgl.reply(requestId, makeDeletionEvents(makeDeletionEvent(1, date + 60, make_object<messageSenderUser>(selfId),
+        makeMessage(messageId, userIds[0], groupChatId, false, date, makeTextMessage("Hello")))));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        "Me deleted the message " + userFirstNames[0] + " " + userLastNames[0] + " sent at " +
+        deletedMessageTime(date), PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// A signed post is the channel's own message, as the log has it, so it is no one's own even when
+// whoever deleted it has the name it is signed with
+TEST_F(SupergroupTest, SignedPostDeleted)
+{
+    constexpr int32_t date         = 12345;
+    constexpr int64_t messageId    = 10000;
+    constexpr int     purpleChatId = 1;
+    const std::string signer       = userFirstNames[1] + " " + userLastNames[1];
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    prpl.discardEvents();
+
+    auto post = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Post"));
+    post->is_channel_post_  = true;
+    post->author_signature_ = signer;
+    tgl.update(make_object<updateNewMessage>(std::move(post)));
+    tgl.verifyRequest(viewMessages(groupChatId, {messageId}, nullptr, true));
+    prpl.verifyEvents(
+        ServGotJoinedChatEvent(connection, purpleChatId, groupChatPurpleName, groupChatTitle),
+        ChatSetTopicEvent(groupChatPurpleName, "", ""),
+        ChatClearUsersEvent(groupChatPurpleName),
+        ServGotChatEvent(connection, purpleChatId, signer, "Post", PURPLE_MESSAGE_RECV, date)
+    );
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    auto logged = makeMessage(messageId, 0, groupChatId, false, date, makeTextMessage("Post"));
+    logged->sender_id_        = make_object<messageSenderChat>(groupChatId);
+    logged->is_channel_post_  = true;
+    logged->author_signature_ = signer;
+    tgl.reply(requestId, makeDeletionEvents(makeDeletionEvent(1, date + 60, make_object<messageSenderUser>(userIds[1]),
+                                                              std::move(logged))));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        signer + " deleted the message " + signer + " sent at " + deletedMessageTime(date), PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// Two messages deleted at once: one request for both, and a deletion made meanwhile, newer, is not
+// taken for theirs
+TEST_F(SupergroupTest, MessagesDeletedTogether)
+{
+    constexpr int32_t date        = 12345;
+    constexpr int64_t messageId[] = {10000, 10001};
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, makeChatMemberStatusCreator("", false, true), 2)));
+    prpl.discardEvents();
+    // Each told apart: sent by different members at different times, one deleted by another member,
+    // the other by its sender
+    constexpr int32_t later = date + 5;
+    receiveMemberMessage(messageId[0], 0, date, true);
+    receiveMemberMessage(messageId[1], 1, later, false);
+
+    auto update = make_object<updateDeleteMessages>();
+    update->chat_id_      = groupChatId;
+    update->message_ids_  = {messageId[0], messageId[1]};
+    update->is_permanent_ = true;
+    update->from_cache_   = false;
+    tgl.update(std::move(update));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 12));
+    tgl.verifyNoRequests();
+    prpl.verifyNoEvents();
+
+    auto events = make_object<chatEvents>();
+    events->events_.push_back(makeDeletionEvent(3, date + 70, make_object<messageSenderUser>(userIds[0]),
+        makeMessage(9999, userIds[0], groupChatId, false, date, makeTextMessage("Other"))));
+    events->events_.push_back(makeDeletionEvent(messageId[1], date + 60, make_object<messageSenderUser>(userIds[1]),
+        makeMessage(messageId[1], userIds[1], groupChatId, false, later, makeTextMessage("Hello"))));
+    events->events_.push_back(makeDeletionEvent(messageId[0], date + 60, make_object<messageSenderUser>(userIds[1]),
+        makeMessage(messageId[0], userIds[0], groupChatId, false, date, makeTextMessage("Hello"))));
+    tgl.reply(requestId, std::move(events));
+    const std::string deleter = userFirstNames[1] + " " + userLastNames[1];
+    prpl.verifyEvents(
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                               deleter + " deleted the message " + userFirstNames[0] + " " + userLastNames[0] +
+                               " sent at " + deletedMessageTime(date), PURPLE_MESSAGE_SYSTEM, 0),
+        ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+                               deleter + " deleted their message sent at " + deletedMessageTime(later),
+                               PURPLE_MESSAGE_SYSTEM, 0)
+    );
+}
+
+// The log fails, or does not answer in time: the notice names whose message it was, as without it
+TEST_F(SupergroupTest, MessageDeletedWithoutLog)
+{
+    constexpr int32_t date        = 12345;
+    constexpr int64_t messageId[] = {10000, 10001};
+    loginWithSupergroup();
+    tgl.update(make_object<updateSupergroup>(makeSupergroup(groupId, make_object<chatMemberStatusAdministrator>(), 2)));
+    prpl.discardEvents();
+    receiveMemberMessage(messageId[0], 0, date, true);
+    receiveMemberMessage(messageId[1], 1, date, false);
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId[0], true, false));
+    uint64_t requestId = tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    prpl.verifyNoEvents();
+    tgl.reply(requestId, makeError(400, "CHAT_ADMIN_REQUIRED"));
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        "The message " + userFirstNames[0] + " " + userLastNames[0] + " sent at " + deletedMessageTime(date) +
+        " has been deleted", PURPLE_MESSAGE_SYSTEM, 0));
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId[1], true, false));
+    tgl.verifyRequest(*makeDeletionsLogRequest(groupChatId, 11));
+    prpl.verifyNoEvents();
+    tgl.runTimeouts();
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        "The message " + userFirstNames[1] + " " + userLastNames[1] + " sent at " + deletedMessageTime(date) +
+        " has been deleted", PURPLE_MESSAGE_SYSTEM, 0));
+}
+
+// Not an administrator, we cannot read the log, so it is not asked
+TEST_F(SupergroupTest, MessageDeletedNotAdministrator)
+{
+    constexpr int32_t date      = 12345;
+    constexpr int64_t messageId = 10000;
+    loginWithSupergroup();
+    receiveMemberMessage(messageId, 0, date, true);
+
+    tgl.update(makeUpdateDeleteMessages(groupChatId, messageId, true, false));
+    tgl.verifyNoRequests();
+    prpl.verifyEvents(ConversationWriteEvent(groupChatPurpleName, NotificationWho,
+        "The message " + userFirstNames[0] + " " + userLastNames[0] + " sent at " + deletedMessageTime(date) +
+        " has been deleted", PURPLE_MESSAGE_SYSTEM, 0));
+}

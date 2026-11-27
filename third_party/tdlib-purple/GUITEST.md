@@ -1,0 +1,601 @@
+# Testing in the GUI
+
+The automated tests drive the plugin through a mock of libpurple and TDLib. They cannot see
+what GTK, Pidgin and a real Telegram server do: whether a hook is accepted, a menu closes, a tab
+turns red, or TDLib polls the right messages. This list is what a person checks in a real Pidgin,
+against a real account, before a release and after changing the parts each test names.
+
+Each test says what to do, what should be seen, and where the debug log can confirm it. The
+"Since" line names the release or the bug that the test was written for: a test is added
+whenever a failure is found that only the GUI showed.
+
+## Setting up
+
+* Pidgin with the plugin installed, started with its debug output kept, in a file only you can
+  read, in a directory only you can write to, such as your home:
+  `cd; rm -f pidgin-debug.log; (umask 077; pidgin -d > pidgin-debug.log 2>&1)`, the file removed
+  first, as one already there keeps its permissions. TDLib's own log goes there too, at the
+  verbosity of Pidgin's debug window; its verbose mode gives TDLib's requests and updates. The
+  log holds messages, names, phone numbers and, while signing in, the login code: take out what
+  is private before showing any of it to others.
+* A group of your own to test in, named however you like, with at least one other member who
+  knows it is for testing: messages can then be sent, reacted to and deleted freely, and
+  someone there can confirm what reached them. Do not test in others' groups.
+* Telegram's phone or desktop app on the same account, to see what the server has.
+* A busy channel, with posts that keep getting reactions, for the reaction counts.
+
+In the log, the plugin's own lines start with `telegram-tdlib:`, TDLib's with `tdlib:`. A
+request the plugin makes appears as TDLib's `Receive request N: <name> {`.
+
+Without Telegram Premium, an account gives one reaction to a message: a test's reaction takes
+the place of the one given before.
+
+## Driving Pidgin with synthetic input
+
+The tests can be done by a script or an agent, with input made up by a tool, on the tester's
+own display. Such input is not a hand on the mouse, and whatever tool is used, look out for:
+
+* A click that lets the button go at once, before the menu it opens is up. GTK's menu then
+  still takes the right button for the one that picks, from the menu and its submenus, and a
+  left click in a submenu closes it with nothing picked: pick with the right button too.
+* A screenshot that grabs the pointer or the display, which closes any open menu.
+* Input going to whatever is under the pointer and has the focus: the tester should not be
+  using the display meanwhile.
+
+With X11's `xdotool`, for example, `click 3` is such a click; `xwd -root` takes screenshots
+without a grab, where ImageMagick's `import` grabs; and `xdotool search --onlyvisible --pid`
+finds a menu, as one of Pidgin's windows.
+
+## Starting and quitting
+
+### S1. Start with conversations open
+
+Quit Pidgin with a tab or two of Telegram chats open, and start it again.
+
+* No warning `Cannot tell which tabs are shown` in the log, and no GLib warning about emission
+  hooks.
+* Each tab is filled with its messages once it is shown: `Redrawing chat <id> ... N messages`.
+  Note how long it took from `Opening chat <id>`, which is logged as the tab is shown: at once
+  for the chosen tab of each window, and for one behind it when it is switched to.
+* A tab of a chat with nothing unread is not marked as having new messages.
+
+Since: 0.9.6, whose focus hook GLib refused, so that no tab was known to be shown.
+
+### S2. No disconnect notice after a restart
+
+Quit Pidgin with a group's tab open, start it, and open the tab.
+
+* The tab does not show "The account has disconnected and you are no longer in this chat",
+  which Pidgin writes into its chats as it quits.
+
+Since: the notice was logged at every quit and shown again when the tab was filled.
+
+### S3. Signing in
+
+With a fresh Pidgin profile (`pidgin -c <directory>`) or an account not yet signed in, add the
+account and enter the login code Telegram sends, and the two-step verification password if the
+account has one.
+
+* Pidgin's dialogs ask for each, take what is entered, and the account connects.
+
+### S4. Messages missed while offline
+
+Quit Pidgin, have someone send several messages to a private chat and a group, start Pidgin.
+
+* All of them are shown, in order, not only the latest.
+
+### S5. Encrypting the local database
+
+On a copy of the profile, or with an account whose database can be lost, turn on "Encrypt the
+local database with the password" in the account's settings, with a password not remembered, and
+connect.
+
+* Pidgin asks for the password; then the plugin asks for it again, warning how long rewriting the
+  database takes, and a notice not to quit stays up until it says the database is encrypted.
+* The debug log names the database directory as encrypted ("using database directory ..., encrypted").
+* Connecting again asks for the password, and a wrong one is refused, the account staying
+  disconnected; the right one connects.
+* "Change the database password..." with two different passwords asks again; with the same one,
+  the database is encrypted anew and the new password opens it next time.
+* Turning the option off asks for the password at the next connection, and goes back to TDLib's
+  built-in key.
+
+## Reading and the tabs shown
+
+### T1. Read as seen
+
+With a chat that has unread messages, open its tab in a focused window, and scroll slowly.
+
+* The phone app shows the messages as read as they come into view, not all at once.
+* Log: `viewMessages` requests listing the messages on screen, oldest first.
+
+### T2. Not read unseen
+
+Leave the window unfocused, minimized, or the screen blanked, while messages arrive.
+
+* They stay unread in the phone app until the window is focused and they are on screen.
+
+Since: 0.9.6.
+
+### T3. Read elsewhere
+
+Read a chat in the phone app while its tab is open in Pidgin, not focused.
+
+* The tab, the tray and the buddy list's menu stop counting it as unread.
+
+## Reactions
+
+### R1. Reaction to a text message
+
+Right-click a text message, pick a reaction from the menu.
+
+* The reaction appears under the message, in Pidgin and the phone app.
+* Log: `Reaction <emoji> to message <id> picked`, then `addMessageReaction`.
+
+Click a reaction someone else gave, on the line under a message; then click it again.
+
+* The first click gives it as ours too, in bold, its count one more; the second takes it back.
+* Log: `Reaction e<emoji> to message <id> clicked: giving it`, then `taking it back`.
+* Pressing on a reaction and dragging off it before letting go does nothing; clicking the paid
+  one (⭐) asks how many stars, as the menu does.
+
+### R2. Reaction to a picture
+
+Right-click the picture of a photo sent without text, and pick a reaction from the message's
+items after "Save Image...". Do the same with a video's preview picture.
+
+* The reaction is given, as in R1; the menu does not just close with nothing done.
+
+Since: the menu of a picture opened on the button's release dropped picks made in its submenus.
+
+### R3. Taking a reaction back
+
+Pick the reaction already given, from the same menu.
+
+* It is removed in Pidgin and in the phone app.
+
+### R4. Counts kept up to date
+
+Open a busy channel's tab in a focused window, with several posts on screen, and watch it for a
+few minutes beside the phone app.
+
+* The counts under every post on screen follow the phone app's, not only those of the latest.
+* Log: TDLib's `messages.getMessagesReactions` queries, every 15 seconds or so, list the posts on
+  screen.
+
+Since: 0.9.6, whose read receipts went newest first, so that TDLib polled the oldest of them.
+
+### R5. Who reacted
+
+Point at a reaction under a group's message.
+
+* The tooltip lists who gave it.
+
+### R6. Reactions to our messages
+
+Have someone react to a message of ours, with its chat's tab closed.
+
+* The chat is marked with ❤️ before its title and its buddy's name, until the tab is opened.
+
+### R7. A reaction to an older message of ours
+
+With the chat's tab open, have someone react to a message of ours older than the earliest the tab
+shows.
+
+* The tab is filled anew from that message to the latest, the reaction under it, if they fit in
+  the lines Pidgin is set to keep of a conversation (its "scrollback_lines" preference).
+* For one further back than that, the tab stays as it is, and the debug log says the message is
+  further back than the tab holds.
+
+## A message's menu
+
+### M1. Edit and delete
+
+Give a message of ours a reaction and take it back, then edit it from its menu, and right-click
+its edited text.
+
+* The edit is written over the message in Pidgin and the other members see it.
+* The menu of its edited text has the message's items, as on its sender's name.
+
+Then delete it.
+
+* The deletion takes it out, and the notice names us, as having deleted our own message: in
+  English, "deleted their message".
+
+Since: an edit forgot that the message was ours, so that deleting it named us as its sender like
+anyone else's; and the text of an edited message whose reactions had been taken back got no
+items of its own in its menu.
+
+### M2. Forward
+
+Forward a message from its menu, to a buddy of this account and to a chat of another account,
+picking each in the dialog by typing part of its name.
+
+* It arrives at both, as a forward where the destination is Telegram.
+
+Forward one again, ticking two destinations: type part of one's name, tick it, type part of the
+other's, tick that too, and press OK.
+
+* The first one stays ticked while the list shows only the second.
+* It arrives at both; with none ticked, Enter forwards it to the one picked, as before.
+
+### M3. Files of a message
+
+On a photo: "Copy the image", paste into another program; "Save Image...", check the name it
+suggests. Drag a file's link out of the conversation into a file manager.
+
+* Each gives the message's own file, under its own name.
+
+Right-click a video's link, under its cover, and a link to another size of a
+video or picture, where it has one.
+
+* The link's own "Copy the file" is on top, then a separator, then the
+  message's items in the order its text's menu and its picture's have them:
+  reactions, "Forward…", "Report the message…" and the rest, with no second
+  "Copy the file" of the same file. A photo's keeps its "Copy the image".
+
+### M4. Giving up an edit
+
+Type a message without sending it, then start editing one of ours from its menu, and press
+Escape. Do it again, and send the edit this time.
+
+* Escape leaves the message as it was; either way, the text typed before comes back into the
+  input field.
+
+### M5. Reporting a sender
+
+Right-click a member's message in a group, then one in a private chat and a channel's post.
+
+* In the group, the menu has "Report" and the member's name, besides "Report the message…";
+  in the channel it does not, nor in a private chat with a contact, as Telegram takes no report
+  about them; a stranger's chat that offers to report them has it (below).
+
+Choose it only for someone who deserves it: it does report them. Then:
+
+* Telegram's reasons are asked for, as for a message, and how it went is told in the group,
+  without a private chat with them opened; or that Telegram takes no report about them.
+
+When a stranger writes first, as spammers do, right-click their message, and their buddy, under
+"Telegram: not in contacts".
+
+* The message's menu has "Report" and their name; the buddy's, "Report…".
+* Chosen, it asks nothing: the tab says "Reported to Telegram's moderators.", and the buddy
+  stays under "Telegram: not in contacts", also after a restart, and after we answer them.
+* Before reporting, restart Pidgin: the buddy is under "Telegram: not in contacts" again, and
+  opens their chat with its history.
+
+With someone not a contact, whom you want as one, drag their buddy from "Telegram: not in
+contacts" into a group of yours.
+
+* They are a contact now, in the phone app too, under the name they gave themselves, and our
+  phone number is not shared with them (unless our privacy setting shows it to every contact);
+  the buddy stays in that group after a restart.
+
+### M6. A message's link
+
+Right-click a post in a public channel, and a message in a private chat or group.
+
+* The post's menu has "Copy the message's link"; the others' do not.
+* Picked, it puts the post's https://t.me/ link on the clipboard, as text: pasted into a web
+  browser, it opens the post.
+
+### M7. A message's buttons
+
+Find a bot's or a channel's message with buttons, such as a post with links under it, or a bot's
+answer with choices, and reactions too, if one has both.
+
+* Each row of buttons is a line under the message, before the line of reactions; a link's button
+  has an arrow, and its tooltip is its address. A warning's is red.
+* A link's button clicked opens the address in the web browser; a bot's, the bot's answer is told
+  in the tab, or the message is changed by it, its buttons too, the reactions staying under them.
+* Right-clicking the buttons' lines gives the message's menu.
+* A reaction given meanwhile, or taken back, leaves the buttons as they were.
+
+## History
+
+### H1. Opening a chat
+
+Open a chat with unread messages.
+
+* It is scrolled to the first unread, with read ones before it.
+
+Leave a chat's tab open, but not the one shown in its window, while more
+than a screenful of messages comes to it. Then switch to it.
+
+* It is scrolled to the first unread, as it was when opened, not left at its end: the message
+  stays in view, the tab not blanked, as the tab holds it already. Where the tab does not hold it
+  and the last read before it, it is filled anew instead: so too when more came than the tab's
+  `scrollback_lines` keep, Pidgin trimming them both away.
+* A tab with nothing unread is left as it was, scrolled where it was.
+
+Since: the tab was filled anew whenever it had unread messages, the first unread one, shown already,
+flashing, then the tab blank a moment, then the message again.
+
+Open, from the buddy list, a buddy who is not a contact and whose chat is not
+in the chat list, such as one blocked and the chat deleted.
+
+* The tab is filled with whatever history Telegram still has, and the buddy's
+  "Report…" is in its menu where Telegram takes a report about them.
+* Where Telegram does not know them, the tab says so, rather than staying empty.
+
+### H2. Going back
+
+Scroll to the top of a conversation, or turn the mouse wheel up there.
+
+* Fifty more messages are added before the earliest, which stays where it was.
+
+In a chat short enough, go back to its first message. Then have the tab filled
+anew from its first unread, as in H1, and go back again.
+
+* The earlier messages come back, up to the first one again.
+
+### H3. Links to messages
+
+Click the time in a reply's quote, and in the notice of an edit or a reaction.
+
+* The conversation scrolls to that message.
+* So it does to a message deleted since, struck out as it comes back from the log, as in H4.
+
+Right-click such a link.
+
+* The menu has the linked message's items, as its own menu has them, with no separator above
+  them; or, for one deleted, "The message has been deleted." A link in a quote of a message
+  from another chat has no items of a message of this one.
+
+### H4. Our deleted messages, again
+
+Send a message, delete it, then close the chat's tab and open it again, or quit Pidgin and start it.
+
+* The message is struck out, as anyone else's deleted message is, or left out if the chat is set
+  not to keep deleted messages.
+
+Since: ours were logged before Telegram gave them their lasting ids, so the log could not tell
+which they were, and they came back as if never deleted.
+
+### H5. A tab short of the newest
+
+Open a chat, a channel best, with more than 200 messages unread and at least
+50 read before them. Watch the line at the end while its messages are fetched.
+
+* The line counts the messages fetched so far, then says how many are being
+  shown, and stays until they are.
+* The tab is scrolled to the first unread, with read ones before it, and holds
+  at most 200 messages; the debug log says it is "short of the newest".
+* It took seconds, not minutes.
+
+Scroll up to its top, as in H2.
+
+* A line at the top says earlier messages are being fetched, then shown.
+* Fifty earlier messages come, and the tab still ends where it did, not at
+  the newest.
+
+Scroll down to its end, or turn the mouse wheel down there.
+
+* A line at the end says later messages are being fetched, then shown.
+* Fifty more messages are added after the last, and what was in view stays
+  there; earlier ones are taken from the top, so that the tab keeps to half of
+  Pidgin's "scrollback_lines".
+* Going on to the end, the newest messages come, and the debug log says "up
+  to the newest".
+
+Follow a link to one of a channel's first posts, as in H6, so that the tab
+starts at the channel's first message. Scroll down for a batch or two, while
+that message is still at the top, and then up to the top, past it. Then do it
+again with "scrollback_lines" set to 0, in `prefs.xml` or with `purple-send
+PurplePrefsSetInt string:/pidgin/conversations/scrollback_lines int32:0`.
+
+* Nothing earlier is fetched, and the tab keeps what it had, rather than
+  being filled anew with the 200 messages from the first; the debug log has no
+  "Showing messages before".
+* With "scrollback_lines" at 0 the first 200 are still written at once and
+  the later ones fifty at a time, and nothing is taken from the top.
+
+With "scrollback_lines" as it was, scroll down until batches take the first
+message from the top, then up to the top again.
+
+* Earlier messages are fetched again, back to the first.
+
+Close the tab and open it again as at first, so that it stops short of the
+newest again; then have a message come to the chat.
+
+* It is not shown at the end, after the gap, but it is logged, and the tab
+  turns red if not looked at.
+
+While it stops short, right-click a message in it, and then its tab's title.
+
+* Both menus have "Go to the latest message", which fills the tab anew with
+  the newest messages; neither has it once the tab ends at the newest, nor in
+  another account's tab.
+* Filled anew, the tab has no lines of reactions at its top, of messages no
+  longer in it, as their counts change; and a link to a message no longer in
+  it fills it anew from that message.
+
+Open it again as at first, then type a message into it and send it; and once
+more, sending it while later messages are being fetched, as the wheel is
+turned down at the end.
+
+* The tab is filled anew with the newest messages, and the one sent comes
+  after them, either way.
+
+Since: the tab was filled with every message from the first unread to the
+newest, which Pidgin took longer to write the more it held, and then trimmed,
+by the line, from the top: a fill of 2938 channel posts took fifteen minutes,
+and the first unread was trimmed away.
+
+### H6. Telegram links
+
+With Pidgin running, hand it a link to a post of a channel, joined or not,
+with `tdlib-purple-tg-link`, as README.md shows; then one to a message of an open chat that
+its tab still shows, and one that it no longer does.
+
+* The chat's conversation comes up, its tab chosen in its window even while another was, at
+  the post, filled from it.
+* The tab still showing the message is scrolled to it; the other one is filled
+  anew from the message.
+* A link to something else, such as `tg://settings`, or to a channel that does
+  not exist, gets a dialog saying it cannot be followed.
+* With Pidgin not running, `tdlib-purple-tg-link` says so, as a desktop
+  notification or with `xmessage`.
+* Made the handler of `tg:` links (`xdg-mime default
+  tdlib-purple-tg-link.desktop x-scheme-handler/tg`), a "View in Telegram"
+  link on a channel's page in Firefox opens the post in Pidgin.
+* A link to a post further back than Pidgin's "scrollback_lines" preference
+  holds gets a dialog saying so; a tab opened for it shows the latest messages,
+  from the first unread, and an open one is left as it was.
+* Two links followed one right after the other, the first to a chat whose tab
+  is just being opened, end up at the second.
+* So do two to an open tab, the first to a message it does not show, which
+  fills it anew, the second to one it shows: it ends at the second, not
+  scrolled back to the first once filled.
+
+## Files and pictures
+
+### F1. Pasting
+
+Copy a picture in an image viewer, and a few files in a file manager; paste each into a message,
+add text after the placeholder, and send.
+
+* The input field shows thumbnails; the message arrives with the picture as a photo, the files as
+  files, the text as their caption.
+
+### F2. Dropping
+
+Drop a file from a file manager onto the input field, and another onto the conversation's text.
+Drag a picture from a web browser, and a link to a page that is not a picture.
+
+* Each file and the picture get their placeholders and thumbnails, and arrive when the message is
+  sent; the link to the page stays text.
+* Log: `Fetching <url>, dropped` for what is dragged from the browser, and
+  `Dropped <url>, not a picture` for the page.
+
+### F3. A pasted thing's menu
+
+Paste a picture, right-click its thumbnail in the input field and pick "Send as a file"; paste
+another, and remove it from the same menu.
+
+* The first arrives as a file rather than a photo; the one removed is not sent.
+
+### F4. Sending and receiving by file transfer
+
+Send a large file with "Send File...", and have someone send you one; cancel another while it is
+being received.
+
+* The transfer dialog's progress advances and the file arrives whole; the one cancelled stops.
+* Log: `Started uploading`, `Finishing uploading`; `Cancelling download` for the one cancelled.
+
+### F5. Stickers and custom emoji
+
+Have someone send an animated sticker, a video sticker and a message with custom emoji: the
+plugin cannot send stickers.
+
+* They are shown animated and transparent around the picture, not on a white square.
+
+### F6. Videos
+
+Receive a video with a cover, and one without.
+
+* The cover, where there is one, is shown rather than the first frame; the links list the
+  video's other sizes, the original marked.
+
+### F7. Rich messages
+
+Find a channel's post laid out in blocks, as a shop's with a heading, a price and pictures (TDLib
+calls it `messageRichMessage`), such as those of СУВЕНІРНА КЕРАМІКА.
+
+* Its headings are bold and bigger, its paragraphs, lists and tables each on lines of their own,
+  links clickable; its pictures are shown in it, a collage's side by side, about 20 lines of the
+  tab's text tall, or the biggest there is, with their captions.
+* With the network slow or cut (unplug it, or stop TDLib's traffic, as the message comes), the
+  message shows the picture's stand-in; once the picture is here, the message is written again
+  with it, not said to be edited, and logged once, with it.
+* A picture clicked opens it; a placeholder, of a video or a picture past the account's limit on
+  what is fetched unasked, downloads its file, "Downloading …" said in the tab, and opens it.
+* Quoted in a reply, its first line of text stands for it.
+
+Since: such a post was shown as TDLib's description of it, cut short.
+
+### F8. Pictures as they come
+
+With the network slowed (a slow proxy, or pulled out for a moment), open a channel whose recent
+posts have photos, stickers, animated ones too, and videos with covers, not fetched on this
+computer before; then have the test group sent a photo, and the same animated sticker twice.
+
+* Each message shows at once, in order with those around it, each picture as a stand-in of its
+  size: blurred, as the phone shows it while loading, or a grey box; a sticker's clear.
+* As each picture comes, it takes its stand-in's place; what is below it does not move.
+* The log viewer has each message once, with its picture, also for one whose picture came after
+  the tab was closed (then as its stand-in), or did not come before Pidgin quit.
+* A photo past the account's limit on what is fetched unasked stays as its stand-in, with no
+  dialog or notice; its size links below fetch it.
+* Both messages of the animated sticker sent twice show its animation, the second at once.
+
+Since: a message waited for its pictures, holding back those after it, and a picture later still
+came at the tab's end as a line of its own.
+
+### F9. Pictures not downloaded
+
+Open a channel not joined, with photos not fetched before.
+
+* Its pictures stay as blurred stand-ins, each with its size links or a link to fetch it, and the
+  debug log has no `Fetching picture` for them.
+* Its menu (the tab's title, or Conversation > More) says "Download media automatically"; picked,
+  the pictures on screen are fetched and written over their stand-ins, and the others as the tab
+  is scrolled to them. The menu then says "Stop downloading media automatically".
+* With the account's "Download media automatically" unticked, a contact's photos stay as
+  stand-ins too, until the contact's menu turns it on.
+
+Since: every picture within the limit was downloaded, whoever sent it.
+
+## Groups
+
+### G1. A group's news
+
+Add someone to the test group, have them leave, pin a message.
+
+* Each is told in words: "X added Y", "X left", "X pinned a message".
+
+### G2. A member who is not a contact
+
+In the test group, open a private conversation with a member who is not in the buddy list, from
+the menu of their name in the member list, and send them a message (or have them write first).
+
+* The conversation's tab shows their name; it goes by `id<their id>`, as the debug log shows.
+* They are in the buddy list, in "Telegram: not in contacts", until Pidgin quits; `blist.xml`
+  does not keep them.
+* Their messages are marked read as they are seen, as a contact's are.
+* Removing them from "Telegram: not in contacts" takes them out of the list and deletes the chat
+  for us: its messages, on the phone too, and its files and log here. The chat stays on Telegram
+  for them, and the next start does not bring them back.
+
+With another member who is not a contact, written to in the same way:
+
+* "Add Buddy..." from the menu of their name adds them as a contact, under their name, and the
+  same tab stays open.
+
+### G3. Chats known from the log
+
+Open a public channel not joined, from a link to it, and quit Pidgin; start it again.
+
+* The channel is under "Telegram: not joined" again, as is any group left or channel unsubscribed
+  whose conversation was logged, and any person written with who is not a contact, under
+  "Telegram: not in contacts".
+* Opened, the channel's tab fills with its messages, as from the link, and nothing is sent to it.
+* Dragged into a group of yours, the channel is joined (subscribed to, in the phone app too),
+  without a tab opened for it, and stays in that group, also after a restart. No "Unexpected
+  response" comes up. One that cannot be joined, as a channel that removed us, says why, and goes
+  back under "Telegram: not joined" at once.
+* Left open while the channel posts, its new posts show in the tab; scrolled far back, the post
+  waits for the tab's end. Closed, nothing more of it comes.
+* A channel never opened before gets a log as its tab is filled (a new directory under
+  `~/.purple/logs/telegram/`), holding the posts the tab shows, so that it is listed again after
+  the next start. Opened again, the tab filled anew, its log gets none of them a second time.
+* With a channel whose newest post is a big photo, on a slow line, closing and opening its tab
+  again before the photo is in: the photo is in the log once.
+* For a group of ours with another member, "Delete group" asks "For everyone" or "For me only";
+  the latter leaves it, and the other member still has it. (Make one for this, with the other
+  test account.)
+* "Delete group" from its menu, the dialog saying what goes: its tab closes and its entry goes,
+  with no error; its directory under `~/.purple/logs/telegram/` is gone, and after the next start
+  it is not in the buddy list.
+* Likewise "Remove" on a buddy written with, under "Telegram: not in contacts": their log's
+  directory is gone, and after the next start they are not back.

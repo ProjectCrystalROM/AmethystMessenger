@@ -1,0 +1,45 @@
+# CodeQL static analysis of the plugin.  Its own workflow, apart from CI: it
+# is slower, and its findings land in the repository's Security tab rather
+# than failing a build.
+#
+# Build mode "none": CodeQL reads the sources without compiling them.  It
+# cannot trace a build inside the Alpine containers ci.yml uses (its tools need
+# glibc, and the build runs under `docker exec`), and the platforms it can run
+# on have no TDLib recent enough to build against.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (C++)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: none
+          config-file: ./.github/codeql/config.yml
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp

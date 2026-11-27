@@ -1,0 +1,2269 @@
+#include "client-utils.h"
+#include "purple-info.h"
+#include "buildopt.h"
+#include "config.h"
+#include "format.h"
+#include "receiving.h"
+#include "file-transfer.h"
+#include <gmodule.h>
+#include <string.h>
+#include <stdlib.h>
+#include <algorithm>
+#include <glib/gstdio.h>
+#include <functional>
+#include <set>
+#include <ctime>
+#include <climits>
+#include <openssl/evp.h>
+
+enum {
+    MAX_MESSAGE_PARTS = 10,
+};
+
+const char *errorCodeMessage()
+{
+    // TRANSLATOR: In-line error message, appears after a colon (':'), arguments will be a number and some error text from Telegram
+    return _("code {0} ({1})");
+}
+
+static std::string messageTypeToString(const td::td_api::MessageContent &content)
+{
+#define C(type) case td::td_api::type::ID: return #type;
+    switch (content.get_id()) {
+    C(messageText)
+    C(messageAnimation)
+    C(messageAudio)
+    C(messageDocument)
+    C(messagePhoto)
+    C(messageExpiredPhoto)
+    C(messageSticker)
+    C(messageVideo)
+    C(messageExpiredVideo)
+    C(messageVideoNote)
+    C(messageVoiceNote)
+    C(messageLocation)
+    C(messageVenue)
+    C(messageContact)
+    C(messageAnimatedEmoji)
+    C(messageDice)
+    C(messageGame)
+    C(messagePoll)
+    C(messageInvoice)
+    C(messageCall)
+    C(messageVideoChatScheduled)
+    C(messageVideoChatStarted)
+    C(messageVideoChatEnded)
+    C(messageInviteVideoChatParticipants)
+    C(messageBasicGroupChatCreate)
+    C(messageSupergroupChatCreate)
+    C(messageChatChangeTitle)
+    C(messageChatChangePhoto)
+    C(messageChatDeletePhoto)
+    C(messageChatAddMembers)
+    C(messageChatJoinByLink)
+    C(messageChatJoinByRequest)
+    C(messageChatDeleteMember)
+    C(messageChatUpgradeTo)
+    C(messageChatUpgradeFrom)
+    C(messagePinMessage)
+    C(messageScreenshotTaken)
+    C(messageChatSetTheme)
+    C(messageCustomServiceAction)
+    C(messageGameScore)
+    C(messagePaymentSuccessful)
+    C(messagePaymentSuccessfulBot)
+    C(messageContactRegistered)
+    C(messagePassportDataSent)
+    C(messagePassportDataReceived)
+    C(messageProximityAlertTriggered)
+    C(messageUnsupported)
+    }
+#undef C
+    return "id " + std::to_string(content.get_id());
+}
+
+std::string getUnsupportedMessageDescription(const td::td_api::MessageContent &content)
+{
+    // TRANSLSATOR: In-line placeholder when an unsupported message is being replied to.
+    return formatMessage(_("Unsupported message type {}"), messageTypeToString(content));
+}
+
+// Fields whose value says nothing: zero, false, empty or absent
+static bool isEmptyDumpValue(const std::string &value)
+{
+    return (value == "0") || (value == "false") || (value == "\"\"") || (value == "null");
+}
+
+std::string describeUnsupportedContent(const td::td_api::MessageContent &content)
+{
+    // TDLib's debug representation is the only generic view of an object its C++ interface
+    // offers: a field per line, nested objects and vectors as indented blocks. Strings are not
+    // escaped in it, so a string can pose as further fields -- which makes it fit for display
+    // (escaped, by the caller) but never for parsing anything out of it. Empty fields, and
+    // blocks that only describe TDLib's file cache, are left out as noise.
+    enum { MAX_LINES = 50 };
+    std::string dump = td::td_api::to_string(content);
+    std::string result;
+    std::string skipUntil; // closing line of a block being left out
+    unsigned    lines = 0;
+
+    for (size_t pos = 0; pos < dump.size(); ) {
+        size_t end = dump.find('\n', pos);
+        if (end == std::string::npos)
+            end = dump.size();
+        std::string line = dump.substr(pos, end - pos);
+        pos = end + 1;
+
+        if (!skipUntil.empty()) {
+            if (line == skipUntil)
+                skipUntil.clear();
+            continue;
+        }
+
+        size_t indent    = line.find_first_not_of(' ');
+        size_t separator = line.find(" = ");
+        if ((indent != std::string::npos) && (separator != std::string::npos)) {
+            std::string value = line.substr(separator + 3);
+            if (isEmptyDumpValue(value) || (value.compare(0, 7, "bytes [") == 0))
+                continue;
+            if ((value == "vector[0] {") || (value == "localFile {") || (value == "remoteFile {") ||
+                (value == "minithumbnail {"))
+            {
+                skipUntil = std::string(indent, ' ') + "}";
+                continue;
+            }
+        }
+
+        if (++lines > MAX_LINES) {
+            result += "\n…";
+            break;
+        }
+        if (!result.empty())
+            result += '\n';
+        result += line;
+    }
+
+    return result;
+}
+
+std::string getDisplayedError(const td::td_api::object_ptr<td::td_api::Object> &object)
+{
+    if (!object) {
+        // Dead code at the time of writing this - NULL response can happen if sendQueryWithTimeout
+        // was used, but it isn't used in a way that can lead to this message
+        return "No response received";
+    }
+    else if (object->get_id() == td::td_api::error::ID) {
+        const td::td_api::error &error = static_cast<const td::td_api::error &>(*object);
+        return formatMessage(errorCodeMessage(), {std::to_string(error.code_), error.message_});
+    } else {
+        // Should not be possible
+        return "Unexpected response";
+    }
+}
+
+std::string proxyTypeToString(PurpleProxyType proxyType)
+{
+    switch (proxyType) {
+    case PURPLE_PROXY_NONE:
+    case PURPLE_PROXY_USE_GLOBAL:
+    case PURPLE_PROXY_USE_ENVVAR:
+        return "unknown";
+    case PURPLE_PROXY_HTTP:
+        return "HTTP";
+    case PURPLE_PROXY_SOCKS4:
+        return "SOCKS4";
+    case PURPLE_PROXY_SOCKS5:
+        return "SOCKS5";
+    case PURPLE_PROXY_TOR:
+        return "TOR";
+    }
+
+    return "unknown";
+}
+
+const char *getPurpleStatusId(const td::td_api::UserStatus &tdStatus)
+{
+    if (tdStatus.get_id() == td::td_api::userStatusOnline::ID)
+        return purple_primitive_get_id_from_type(PURPLE_STATUS_AVAILABLE);
+    else
+        return purple_primitive_get_id_from_type(PURPLE_STATUS_AWAY);
+}
+
+PurpleBlistNode *findChatBlistNode(const TdAccountData &account, const td::td_api::chat &chat)
+{
+    const td::td_api::user *privateUser = account.getUserByPrivateChat(chat);
+    if (privateUser) {
+        PurpleBuddy *buddy = purple_find_buddy(account.purpleAccount, getPurpleBuddyName(*privateUser).c_str());
+        return buddy ? PURPLE_BLIST_NODE(buddy) : nullptr;
+    }
+    SecretChatId secretChatId = getSecretChatId(chat);
+    if (secretChatId.valid()) {
+        PurpleBuddy *buddy = purple_find_buddy(account.purpleAccount, getSecretChatBuddyName(secretChatId).c_str());
+        return buddy ? PURPLE_BLIST_NODE(buddy) : nullptr;
+    }
+    PurpleChat *purpleChat = purple_blist_find_chat(account.purpleAccount, getPurpleChatName(chat).c_str());
+    return purpleChat ? PURPLE_BLIST_NODE(purpleChat) : nullptr;
+}
+
+static const char DELETED_MESSAGES_SETTING[] = "tdlib-deleted-messages";
+
+bool keepsDeletedMessages(PurpleAccount *account, PurpleBlistNode *node)
+{
+    const char *chosen = node ? purple_blist_node_get_string(node, DELETED_MESSAGES_SETTING) : nullptr;
+    if (chosen && *chosen)
+        return !strcmp(chosen, "keep");
+    return purple_account_get_bool(account, AccountOptions::StrikeOutDeleted, AccountOptions::StrikeOutDeletedDefault);
+}
+
+void setKeepsDeletedMessages(PurpleBlistNode *node, bool keep)
+{
+    purple_blist_node_set_string(node, DELETED_MESSAGES_SETTING, keep ? "keep" : "remove");
+}
+
+static const char DOWNLOAD_MEDIA_SETTING[] = "tdlib-download-media";
+
+bool downloadsMedia(PurpleAccount *account, PurpleBlistNode *node)
+{
+    const char *chosen = node ? purple_blist_node_get_string(node, DOWNLOAD_MEDIA_SETTING) : nullptr;
+    if (chosen && *chosen)
+        return !strcmp(chosen, "yes");
+    // Under "Telegram: not joined" or "Telegram: not in contacts", which are not saved
+    if (node && (purple_blist_node_get_flags(node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE))
+        return false;
+    return purple_account_get_bool(account, AccountOptions::DownloadMedia, AccountOptions::DownloadMediaDefault);
+}
+
+void setDownloadsMedia(PurpleBlistNode *node, bool download)
+{
+    purple_blist_node_set_string(node, DOWNLOAD_MEDIA_SETTING, download ? "yes" : "no");
+}
+
+bool downloadsChatMedia(const TdAccountData &account, const td::td_api::chat &chat)
+{
+    PurpleBlistNode *node = findChatBlistNode(account, chat);
+    if (!node) {
+        // Its entry removed by hand, a contact's or a chat joined goes by the account
+        const td::td_api::user *privateUser = account.getUserByPrivateChat(chat);
+        if (privateUser ? !privateUser->is_contact_ : !account.isGroupChatWithMembership(chat))
+            return false;
+    }
+    return downloadsMedia(account.purpleAccount, node);
+}
+
+std::string getPurpleBuddyName(const td::td_api::user &user)
+{
+    return getPurpleBuddyName(getId(user));
+}
+
+std::string getPurpleBuddyName(UserId userId)
+{
+    // Prepend "id" so it's not accidentally equal to our phone number which is account name
+    return "id" + std::to_string(userId.value());
+}
+
+std::string getSecretChatBuddyName(SecretChatId secretChatId)
+{
+    return "secret" + std::to_string(secretChatId.value());
+}
+
+std::vector<const td::td_api::user *> getUsersByPurpleName(const char *buddyName, TdAccountData &account,
+                                                           const char *action, bool byDisplayName)
+{
+    std::vector<const td::td_api::user *> result;
+
+    // By id, as the plugin names users; nobody, if no user has it
+    if (isUserIdName(buddyName)) {
+        UserId                  userId = purpleBuddyNameToUserId(buddyName);
+        const td::td_api::user *tdUser = userId.valid() ? account.getUser(userId) : nullptr;
+        if (tdUser != nullptr)
+            result.push_back(tdUser);
+        else if (action)
+            purple_debug_warning(config::pluginId, "Cannot %s: no user with id %s\n", action, buddyName);
+    } else if (!strcmp(getCanonicalPhoneNumber(buddyName),
+                       getCanonicalPhoneNumber(purple_account_get_username(account.purpleAccount)))) {
+        // Ourselves, as group chats list us: by the account's name, for libpurple to show our alias
+        const td::td_api::user *self = account.getUserByPhone(purple_account_get_username(account.purpleAccount));
+        if (self)
+            result.push_back(self);
+    } else if (isPhoneNumber(buddyName)) {
+        // A front-end may address a contact by phone number (e.g. "+15555550100", as a dialer or an
+        // address book would) rather than by an "id<n>" buddy or a display name. Resolve the number
+        // to the Telegram user through the phone index.
+        const td::td_api::user *tdUser = account.getUserByPhone(buddyName);
+        if (tdUser != nullptr)
+            result.push_back(tdUser);
+        else if (action)
+            purple_debug_warning(config::pluginId, "Cannot %s: no Telegram user with phone number %s\n", action, buddyName);
+    } else {
+        // A display name, which anyone may choose, only where a person types it, as for a group;
+        // else, as there too failing that, a @username, which is someone's own
+        if (byDisplayName)
+            account.getUsersByDisplayName(buddyName, result);
+        if (result.empty())
+            account.getUsersByUsername(buddyName, result);
+        if (action) {
+            if (result.empty())
+                purple_debug_warning(config::pluginId, "Cannot %s: no user with display name or username '%s'\n",
+                                    action, buddyName);
+            else if (result.size() != 1)
+                purple_debug_warning(config::pluginId, "Cannot %s: more than one user with display name '%s'\n",
+                                    action, buddyName);
+        }
+    }
+
+    return result;
+}
+
+PurpleConversation *getImConversation(PurpleAccount *account, const char *username)
+{
+    PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM, username, account);
+    if (conv == NULL)
+        conv = purple_conversation_new(PURPLE_CONV_TYPE_IM, account, username);
+
+    return conv;
+}
+// Pidgin takes the title of a group chat's tab from its entry in the buddy list whenever it updates
+// the tab, and failing that, from the conversation's name, chat-<id>. A group we are not a member of
+// has no entry, so it gets one for as long as the program runs, in a group of its own; neither is
+// saved. Joining the group makes it a lasting one (see updateGroupChat), as moving it into another
+// group, which joins it, does (PurpleTdClient::chatMoved).
+static const char *getTransientChatGroupName()
+{
+    // TRANSLATOR: Buddy-list group, holding channels and groups shown in a conversation though not joined. It lasts until the program quits.
+    return _("Telegram: not joined");
+}
+
+static const char *getTransientBuddyGroupName()
+{
+    // TRANSLATOR: Buddy-list group, holding users written with though not contacts. It lasts until the program quits.
+    return _("Telegram: not in contacts");
+}
+
+static PurpleGroup *getTransientGroup(const char *groupName)
+{
+    PurpleGroup *group = purple_find_group(groupName);
+    if (!group) {
+        group = purple_group_new(groupName);
+        purple_blist_node_set_flags(PURPLE_BLIST_NODE(group), PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+        purple_blist_add_group(group, NULL);
+    }
+    return group;
+}
+
+void addTransientChat(TdAccountData &account, const td::td_api::chat &chat)
+{
+    PurpleGroup *group = getTransientGroup(getTransientChatGroupName());
+
+    purple_debug_misc(config::pluginId, "Adding chat %s to the buddy list until the program quits\n",
+                      chat.title_.c_str());
+    PurpleChat *purpleChat = purple_chat_new(account.purpleAccount, chat.title_.c_str(), getChatComponents(chat));
+    purple_blist_node_set_flags(PURPLE_BLIST_NODE(purpleChat), PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    purple_blist_add_chat(purpleChat, group, NULL);
+}
+
+
+PurpleConvChat *getChatConversation(TdAccountData &account, const td::td_api::chat &chat,
+                                    int chatPurpleId)
+{
+    std::string chatName       = getPurpleChatName(chat);
+    bool        newChatCreated = false;
+
+    // If account logged off with chats open, these chats will be purple_conv_chat_left()'d but not
+    // purple_conversation_destroy()'d by purple_connection_destroy. So when logging back in,
+    // conversation will exist but not necessarily with correct libpurple id. Therefore, lookup by
+    // libpurple id using purple_find_chat cannot be used.
+    PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT, chatName.c_str(),
+                                                                     account.purpleAccount);
+
+    // Such pre-open chats will (unless some other logic intervenes) be inactive (as in,
+    // purple_conv_chat_has_left returns true) and if that's the case, serv_got_joined_chat must
+    // still be called to make them active and thus able to send or receive messages, because that's
+    // the kind of thing we were called for here.
+    if ((conv == NULL) || purple_conv_chat_has_left(purple_conversation_get_chat_data(conv))) {
+        if (chatPurpleId != 0) {
+            purple_debug_misc(config::pluginId, "Creating conversation for chat %s (purple id %d)\n",
+                              chat.title_.c_str(), chatPurpleId);
+            bool transient = !purple_blist_find_chat(account.purpleAccount, chatName.c_str());
+            if (transient)
+                addTransientChat(account, chat);
+            serv_got_joined_chat(purple_account_get_connection(account.purpleAccount), chatPurpleId, chatName.c_str());
+            conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT, chatName.c_str(),
+                                                         account.purpleAccount);
+            if (conv == NULL)
+                purple_debug_warning(config::pluginId, "Did not create conversation for chat %s\n", chat.title_.c_str());
+            else {
+                // The conversation was named before it could know of the entry, which Pidgin will
+                // only look at when it next updates the tab
+                if (transient) {
+                    purple_debug_misc(config::pluginId, "Setting conversation title to '%s'\n", chat.title_.c_str());
+                    purple_conversation_set_title(conv, chat.title_.c_str());
+                }
+                newChatCreated = true;
+            }
+
+        } else
+            purple_debug_warning(config::pluginId, "No internal ID for chat %s\n", chat.title_.c_str());
+    }
+
+    if (conv) {
+        PurpleConvChat *purpleChat = purple_conversation_get_chat_data(conv);
+
+        if (purpleChat && newChatCreated) {
+            BasicGroupId                          basicGroupId = getBasicGroupId(chat);
+            const td::td_api::basicGroupFullInfo *groupInfo    = basicGroupId.valid() ? account.getBasicGroupInfo(basicGroupId) : nullptr;
+            if (groupInfo)
+                updateChatConversation(purpleChat, *groupInfo, account);
+
+            SupergroupId supergroupId = getSupergroupId(chat);
+            if (supergroupId.valid()) {
+                const td::td_api::supergroupFullInfo *supergroupInfo = account.getSupergroupInfo(supergroupId);
+                const td::td_api::chatMembers        *members        = account.getSupergroupMembers(supergroupId);
+                if (supergroupInfo)
+                    updateChatConversation(purpleChat, *supergroupInfo, account);
+                if (members)
+                    updateSupergroupChatMembers(purpleChat, *members, account);
+            }
+        }
+
+        return purpleChat;
+    }
+
+    return NULL;
+}
+
+PurpleConvChat *findChatConversation(PurpleAccount *account, const td::td_api::chat &chat)
+{
+    std::string         name = getPurpleChatName(chat);
+    PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT,
+                                                                     name.c_str(), account);
+    if (conv)
+        return purple_conversation_get_chat_data(conv);
+    return NULL;
+}
+
+bool conversationHasFocus(PurpleConversation *conv)
+{
+    PurpleConversationUiOps *ops = purple_conversation_get_ui_ops(conv);
+
+    // purple_conversation_has_focus return false if this callback is not set, as is the case with
+    // bitlbee, but we want to default to sending read receipts
+    if ((ops == NULL) || (ops->has_focus == NULL))
+        return true;
+    else
+        return purple_conversation_has_focus(conv);
+}
+
+bool isDeletedUser(const td::td_api::user &user)
+{
+    return user.type_ && (user.type_->get_id() == td::td_api::userTypeDeleted::ID);
+}
+
+static PurpleGroup *findDeletedAccountsGroup(PurpleBlistNode *node)
+{
+    for (; node; node = purple_blist_node_get_sibling_next(node)) {
+        if (purple_blist_node_get_type(node) == PURPLE_BLIST_GROUP_NODE) {
+            if (purple_blist_node_get_string(node, GroupOptions::DeletedAccounts))
+                return reinterpret_cast<PurpleGroup *>(node);
+        } else {
+            PurpleGroup *group = findDeletedAccountsGroup(purple_blist_node_get_first_child(node));
+            if (group)
+                return group;
+        }
+    }
+    return NULL;
+}
+
+// Deleted accounts of every Telegram account go to one group. It is found by the setting we gave
+// it, not by its name, which changes with the translation in use; a name the user chose stays.
+PurpleGroup *getDeletedAccountsGroup(bool create)
+{
+    // TRANSLATOR: Buddy-list group, holding buddies whose Telegram accounts were deleted.
+    const char  *name  = _("Deleted Accounts (Telegram)");
+    PurpleGroup *group = findDeletedAccountsGroup(purple_blist_get_root());
+
+    if (group) {
+        const char *givenName = purple_blist_node_get_string(PURPLE_BLIST_NODE(group), GroupOptions::DeletedAccounts);
+        if (givenName && !strcmp(purple_group_get_name(group), givenName) && strcmp(givenName, name) &&
+            !purple_find_group(name))
+        {
+            purple_debug_info(config::pluginId, "Renaming group %s to %s\n", givenName, name);
+            purple_blist_rename_group(group, name);
+            purple_blist_node_set_string(PURPLE_BLIST_NODE(group), GroupOptions::DeletedAccounts, name);
+        }
+    } else if (create) {
+        group = purple_find_group(name);
+        if (!group) {
+            group = purple_group_new(name);
+            purple_blist_add_group(group, NULL);
+        }
+        purple_blist_node_set_string(PURPLE_BLIST_NODE(group), GroupOptions::DeletedAccounts, name);
+    }
+
+    return group;
+}
+
+static void writeBuddyNotice(TdAccountData &account, PurpleBuddy *buddy, const char *notice)
+{
+    PurpleConversation *conv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM,
+                                                                      purple_buddy_get_name(buddy),
+                                                                      account.purpleAccount);
+    if (conv)
+        purple_conv_im_write(purple_conversation_get_im_data(conv), "", notice,
+                             PURPLE_MESSAGE_SYSTEM, time(NULL));
+}
+
+// The buddy is kept, with the name it had, for its conversations' log
+void markBuddyDeleted(TdAccountData &account, const td::td_api::user &user)
+{
+    std::string  purpleUserName = getPurpleBuddyName(user);
+    PurpleBuddy *buddy          = purple_find_buddy(account.purpleAccount, purpleUserName.c_str());
+    if (!buddy || purple_blist_node_get_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::GroupBeforeDeletion))
+        return;
+
+    purple_debug_info(config::pluginId, "Account of buddy %s has been deleted\n", purpleUserName.c_str());
+    PurpleGroup *oldGroup = purple_buddy_get_group(buddy);
+    const char  *oldAlias = purple_buddy_get_alias_only(buddy);
+    // As shown: the contact's name, if the user gave one, else the buddy's, else its id
+    std::string  alias    = purple_buddy_get_contact_alias(buddy);
+    if (oldAlias)
+        purple_blist_node_set_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::AliasBeforeDeletion, oldAlias);
+    purple_blist_node_set_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::GroupBeforeDeletion,
+                                 oldGroup ? purple_group_get_name(oldGroup) : "");
+
+    // TRANSLATOR: Buddy's name, of an account that was deleted. The argument is the name it had.
+    purple_blist_alias_buddy(buddy, formatMessage(_("{} (deleted)"), alias).c_str());
+    purple_blist_add_buddy(buddy, NULL, getDeletedAccountsGroup(true), NULL);
+    purple_prpl_got_user_status(account.purpleAccount, purpleUserName.c_str(),
+                                purple_primitive_get_id_from_type(PURPLE_STATUS_OFFLINE), NULL);
+    // TRANSLATOR: In-chat status update. The owner may have deleted it, or Telegram.
+    writeBuddyNotice(account, buddy, _("This account has been deleted."));
+}
+
+// Should a deleted account ever come back, its buddy goes back where it was, with its name
+void restoreDeletedBuddy(TdAccountData &account, const td::td_api::user &user)
+{
+    std::string  purpleUserName = getPurpleBuddyName(user);
+    PurpleBuddy *buddy          = purple_find_buddy(account.purpleAccount, purpleUserName.c_str());
+    const char  *oldGroupName   = buddy ? purple_blist_node_get_string(PURPLE_BLIST_NODE(buddy),
+                                                                       BuddyOptions::GroupBeforeDeletion) : NULL;
+    if (!oldGroupName)
+        return;
+
+    purple_debug_info(config::pluginId, "Account of buddy %s has been restored\n", purple_buddy_get_name(buddy));
+    PurpleGroup *oldGroup = *oldGroupName ? purple_find_group(oldGroupName) : NULL;
+    purple_blist_add_buddy(buddy, NULL, oldGroup, NULL);
+    purple_blist_node_remove_setting(PURPLE_BLIST_NODE(buddy), BuddyOptions::GroupBeforeDeletion);
+    // TRANSLATOR: In-chat status update, of an account that had been deleted.
+    writeBuddyNotice(account, buddy, _("This account has been restored."));
+    const char *oldAlias = purple_blist_node_get_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::AliasBeforeDeletion);
+    std::string alias    = oldAlias ? oldAlias : makeBasicDisplayName(user);
+    purple_blist_node_remove_setting(PURPLE_BLIST_NODE(buddy), BuddyOptions::AliasBeforeDeletion);
+    if (!alias.empty())
+        purple_blist_alias_buddy(buddy, alias.c_str());
+}
+
+// An entry kept only while the program runs, as a buddy not a contact or a chat not joined, being
+// moved by the user into a group of theirs, which is saved. A group by our name, saved as by an
+// earlier version, is still ours: an entry put in it is not moved.
+bool isMovedOutOfTransient(PurpleBlistNode *node, PurpleGroup *group)
+{
+    if (!node || !group || !(purple_blist_node_get_flags(node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE) ||
+        (purple_blist_node_get_flags(PURPLE_BLIST_NODE(group)) & PURPLE_BLIST_NODE_FLAG_NO_SAVE))
+        return false;
+    const char *groupName = purple_group_get_name(group);
+    return g_strcmp0(groupName, getTransientChatGroupName()) &&
+           g_strcmp0(groupName, getTransientBuddyGroupName());
+}
+
+// Moved out by the user, an entry that could not be kept, as a chat that cannot be joined, goes back
+// at once, rather than at the next start
+void returnToTransientGroup(PurpleBlistNode *node)
+{
+    if (!node || !(purple_blist_node_get_flags(node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE))
+        return;
+    if (PURPLE_BLIST_NODE_IS_CHAT(node))
+        purple_blist_add_chat(PURPLE_CHAT(node), getTransientGroup(getTransientChatGroupName()), NULL);
+    else if (PURPLE_BLIST_NODE_IS_BUDDY(node))
+        purple_blist_add_buddy(PURPLE_BUDDY(node), NULL, getTransientGroup(getTransientBuddyGroupName()), NULL);
+}
+
+void keepInBuddyList(PurpleBlistNode *node)
+{
+    purple_blist_node_set_flags(node, PurpleBlistNodeFlags(purple_blist_node_get_flags(node) &
+                                                           ~PURPLE_BLIST_NODE_FLAG_NO_SAVE));
+}
+
+bool isTransientBuddy(PurpleBuddy *buddy)
+{
+    return buddy && (purple_blist_node_get_flags(PURPLE_BLIST_NODE(buddy)) & PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+}
+
+// A conversation with a user goes by their id, which Pidgin shows by the name of the user's buddy:
+// one not a contact gets a buddy for as long as the program runs, in a group of its own; neither is
+// saved. Becoming a contact makes it a lasting one (see updatePrivateChat), as moving it into
+// another group does, by adding them (PurpleTdClient::buddyMoved); so for a chat not joined
+// (addTransientChat).
+std::string addTransientBuddy(TdAccountData &account, const td::td_api::user &user)
+{
+    std::string  buddyName = getPurpleBuddyName(user);
+    std::string  alias     = account.getDisplayName(user);
+    PurpleBuddy *buddy     = purple_find_buddy(account.purpleAccount, buddyName.c_str());
+    if (buddy) {
+        // Renamed, as a contact's buddy is (updatePrivateChat)
+        if (isTransientBuddy(buddy) && !alias.empty())
+            purple_blist_alias_buddy(buddy, alias.c_str());
+        return buddyName;
+    }
+    PurpleGroup *group = getTransientGroup(getTransientBuddyGroupName());
+    purple_debug_misc(config::pluginId, "Adding %s to the buddy list until the program quits\n", buddyName.c_str());
+    buddy = purple_buddy_new(account.purpleAccount, buddyName.c_str(), alias.empty() ? NULL : alias.c_str());
+    purple_blist_node_set_flags(PURPLE_BLIST_NODE(buddy), PURPLE_BLIST_NODE_FLAG_NO_SAVE);
+    purple_blist_add_buddy(buddy, NULL, group, NULL);
+    return buddyName;
+}
+
+void updatePrivateChat(TdAccountData &account, const td::td_api::chat *chat, const td::td_api::user &user)
+{
+    if (isDeletedUser(user)) {
+        markBuddyDeleted(account, user);
+        return;
+    }
+
+    std::string purpleUserName = getPurpleBuddyName(user);
+    std::string alias          = chat ? chat->title_ : makeBasicDisplayName(user);
+
+    PurpleBuddy *buddy = purple_find_buddy(account.purpleAccount, purpleUserName.c_str());
+    if ((buddy == NULL) || isTransientBuddy(buddy)) {
+        purple_debug_misc(config::pluginId, "Adding new buddy %s for user %s\n",
+                          alias.c_str(), purpleUserName.c_str());
+
+        const ContactRequest *contactReq = account.findContactRequest(getId(user));
+        PurpleGroup          *group      = (contactReq && !contactReq->groupName.empty()) ?
+                                           purple_find_group(contactReq->groupName.c_str()) : NULL;
+        // Moved out of "Telegram: not in contacts" by the user (PurpleTdClient::buddyMoved), it stays
+        if (buddy && isMovedOutOfTransient(PURPLE_BLIST_NODE(buddy), purple_buddy_get_group(buddy)))
+            group = purple_buddy_get_group(buddy);
+        if (group)
+            purple_debug_misc(config::pluginId, "Adding into group %s\n", purple_group_get_name(group));
+
+        // One written with before, as no contact, is the same buddy, a lasting one now, so that the
+        // conversation with them stays the same tab
+        if (buddy) {
+            keepInBuddyList(PURPLE_BLIST_NODE(buddy));
+            if (!alias.empty())
+                purple_blist_alias_buddy(buddy, alias.c_str());
+        } else
+            buddy = purple_buddy_new(account.purpleAccount, purpleUserName.c_str(), alias.c_str());
+        purple_blist_add_buddy(buddy, NULL, group, NULL);
+        // If a new buddy has been added here, it means that there was updateNewChat with the private
+        // chat. This means either we added them to contacts or started messaging them, or they
+        // messaged us. Either way, there is no need to for any extra notification about new contact
+        // because the user will be aware anyway.
+    } else {
+        // An empty title, as of a deleted user's chat, would leave the buddy known by its id
+        if (!alias.empty())
+            purple_blist_alias_buddy(buddy, alias.c_str());
+
+        const char *oldPhotoIdStr = purple_blist_node_get_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::ProfilePhotoId);
+        int64_t     oldPhotoId    = 0;
+        if (oldPhotoIdStr)
+            sscanf(oldPhotoIdStr, "%" G_GINT64_FORMAT, &oldPhotoId);
+        if (user.profile_photo_ && user.profile_photo_->small_)
+        {
+            const td::td_api::file &photo = *user.profile_photo_->small_;
+            if (photo.local_ && photo.local_->is_downloading_completed_ &&
+                (user.profile_photo_->id_ != oldPhotoId))
+            {
+                gchar  *img = NULL;
+                size_t  len;
+                GError *err = NULL;
+                g_file_get_contents(photo.local_->path_.c_str(), &img, &len, &err);
+                if (err) {
+                    purple_debug_warning(config::pluginId, "Failed to load profile photo %s for %s: %s\n",
+                                         photo.local_->path_.c_str(), purpleUserName.c_str(),  err->message);
+                    g_error_free(err);
+                } else {
+                    std::string newPhotoIdStr = std::to_string(user.profile_photo_->id_);
+                    purple_blist_node_set_string(PURPLE_BLIST_NODE(buddy), BuddyOptions::ProfilePhotoId,
+                                                 newPhotoIdStr.c_str());
+                    purple_debug_info(config::pluginId, "Loaded new profile photo for %s (id %s)\n",
+                                      purpleUserName.c_str(), newPhotoIdStr.c_str());
+                    purple_buddy_icons_set_for_user(account.purpleAccount, purpleUserName.c_str(),
+                                                    img, len, NULL);
+                }
+            }
+        } else if (oldPhotoId) {
+            purple_debug_info(config::pluginId, "Removing profile photo from %s\n", purpleUserName.c_str());
+            purple_blist_node_remove_setting(PURPLE_BLIST_NODE(buddy), BuddyOptions::ProfilePhotoId);
+            purple_buddy_icons_set_for_user(account.purpleAccount, purpleUserName.c_str(), NULL, 0, NULL);
+        }
+    }
+}
+
+static void updateGroupChat(TdAccountData &account, const td::td_api::chat &chat,
+                            const td::td_api::object_ptr<td::td_api::ChatMemberStatus> &groupStatus,
+                            const char *groupType, const std::string &groupId)
+{
+    if (!isGroupMember(groupStatus)) {
+        purpleDebug("Skipping {} {} because we are not a member", {std::string(groupType), groupId});
+        return;
+    }
+
+    std::string  chatName   = getPurpleChatName(chat);
+    PurpleChat  *purpleChat = purple_blist_find_chat(account.purpleAccount, chatName.c_str());
+    if (!purpleChat) {
+        purpleDebug("Adding new chat for {} {} ({})", {std::string(groupType), groupId, chat.title_});
+        purpleChat = purple_chat_new(account.purpleAccount, chat.title_.c_str(), getChatComponents(chat));
+        purple_blist_add_chat(purpleChat, NULL, NULL);
+    } else {
+        // Shown before we joined, it is ours now, and to be kept
+        PurpleBlistNode *node = PURPLE_BLIST_NODE(purpleChat);
+        if (purple_blist_node_get_flags(node) & PURPLE_BLIST_NODE_FLAG_NO_SAVE) {
+            purple_debug_misc(config::pluginId, "Keeping chat %s in the buddy list\n", chat.title_.c_str());
+            // Where joined chats are, unless the user moved it into a group of theirs to join it
+            bool moved = isMovedOutOfTransient(node, purple_chat_get_group(purpleChat));
+            keepInBuddyList(node);
+            if (!moved)
+                purple_blist_add_chat(purpleChat, NULL, NULL);
+        }
+        // As saved by an earlier version
+        completeChatComponents(purpleChat);
+        const char *oldName = purple_chat_get_name(purpleChat);
+        if (chat.title_ != oldName) {
+            purple_debug_misc(config::pluginId, "Renaming chat '%s' to '%s'\n", oldName, chat.title_.c_str());
+            purple_blist_alias_chat(purpleChat, chat.title_.c_str());
+        }
+    }
+
+    if (account.isExpectedChat(getId(chat))) {
+        PurpleConversation *baseConv = purple_find_conversation_with_account(PURPLE_CONV_TYPE_CHAT,
+                                                                            chatName.c_str(), account.purpleAccount);
+        if (baseConv && purple_conv_chat_has_left(purple_conversation_get_chat_data(baseConv))) {
+            purple_debug_misc(config::pluginId, "Rejoining chat %s as previously requested\n", chatName.c_str());
+            serv_got_joined_chat(purple_account_get_connection(account.purpleAccount),
+                                 account.getPurpleChatId(getId(chat)), chatName.c_str());
+        }
+        account.removeExpectedChat(getId(chat));
+    }
+
+    const char *oldPhotoId = purple_blist_node_get_string(PURPLE_BLIST_NODE(purpleChat), BuddyOptions::ProfilePhotoId);
+    if (chat.photo_ && chat.photo_->small_)
+    {
+        const td::td_api::file &photo = *chat.photo_->small_;
+        if (photo.local_ && photo.local_->is_downloading_completed_ && photo.remote_ &&
+            !photo.remote_->unique_id_.empty() && (!oldPhotoId || (photo.remote_->unique_id_ != oldPhotoId)))
+        {
+            gchar  *img = NULL;
+            size_t  len;
+            GError *err = NULL;
+            g_file_get_contents(photo.local_->path_.c_str(), &img, &len, &err);
+            if (err) {
+                purple_debug_warning(config::pluginId, "Failed to load chat photo %s for %s: %s\n",
+                                        photo.local_->path_.c_str(), chat.title_.c_str(),  err->message);
+                g_error_free(err);
+            } else {
+                purple_blist_node_set_string(PURPLE_BLIST_NODE(purpleChat), BuddyOptions::ProfilePhotoId,
+                                             photo.remote_->unique_id_.c_str());
+                purple_debug_info(config::pluginId, "Loaded new chat photo for %s (id %s)\n",
+                                  chat.title_.c_str(), photo.remote_->unique_id_.c_str());
+                purple_buddy_icons_node_set_custom_icon(PURPLE_BLIST_NODE(purpleChat),
+                                                        reinterpret_cast<guchar *>(img), len);
+            }
+        }
+    } else if (oldPhotoId) {
+        purple_debug_info(config::pluginId, "Removing chat photo from %s\n", chat.title_.c_str());
+        purple_blist_node_remove_setting(PURPLE_BLIST_NODE(purpleChat), BuddyOptions::ProfilePhotoId);
+        purple_buddy_icons_node_set_custom_icon(PURPLE_BLIST_NODE(purpleChat), NULL, 0);
+    }
+}
+
+void updateBasicGroupChat(TdAccountData &account, BasicGroupId groupId)
+{
+    const td::td_api::basicGroup *group = account.getBasicGroup(groupId);
+    const td::td_api::chat       *chat  = account.getBasicGroupChatByGroup(groupId);
+
+    if (!group)
+        purpleDebug("Basic group {} does not exist yet\n", groupId.value());
+    else if (!chat)
+        purpleDebug("Chat for basic group {} does not exist yet\n", groupId.value());
+    else
+        updateGroupChat(account, *chat, group->status_, "basic group", std::to_string(groupId.value()));
+}
+
+void updateSupergroupChat(TdAccountData &account, SupergroupId groupId)
+{
+    const td::td_api::supergroup *group = account.getSupergroup(groupId);
+    const td::td_api::chat       *chat  = account.getSupergroupChatByGroup(groupId);
+
+    if (!group)
+        purpleDebug("Supergroup {} does not exist yet\n", groupId.value());
+    else if (!chat)
+        purpleDebug("Chat for supergroup {} does not exist yet\n", groupId.value());
+    else {
+        updateGroupChat(account, *chat, group->status_, "supergroup", std::to_string(groupId.value()));
+        PurpleChat *purpleChat = purple_blist_find_chat(account.purpleAccount, getPurpleChatName(*chat).c_str());
+        if (!purpleChat)
+            return;
+        PurpleBlistNode *node = PURPLE_BLIST_NODE(purpleChat);
+        if (group->usernames_ && !group->usernames_->active_usernames_.empty())
+            purple_blist_node_set_string(node, BuddyOptions::PublicName,
+                                         group->usernames_->active_usernames_.front().c_str());
+        else if (purple_blist_node_get_string(node, BuddyOptions::PublicName))
+            purple_blist_node_remove_setting(node, BuddyOptions::PublicName);
+    }
+}
+
+bool isInviteLinkActive(const td::td_api::chatInviteLink &linkInfo)
+{
+    return !linkInfo.is_revoked_ &&
+        ((linkInfo.member_limit_ == 0) || (linkInfo.member_count_ < linkInfo.member_limit_)) &&
+        ((linkInfo.expiration_date_ == 0) || (std::time(NULL) < static_cast<time_t>(linkInfo.expiration_date_)));
+}
+
+static std::string lastMessageSetting(ChatId chatId)
+{
+    return "last-message-chat" + std::to_string(chatId.value());
+}
+
+// Of a chat deleted, nothing stays to tell of it: its tab, what is kept of it among the account's
+// settings, and Pidgin's log of it, with the pictures it holds. A group chat's entry goes too; a
+// buddy's is being removed by Pidgin.
+void wipeChatTraces(PurpleAccount *purpleAccount, ChatId chatId, const std::string &convName,
+                    PurpleConversationType type)
+{
+    PurpleConversation *conv = purple_find_conversation_with_account(type, convName.c_str(), purpleAccount);
+    if (conv)
+        purple_conversation_destroy(conv);
+    PurpleChat *purpleChat = (type == PURPLE_CONV_TYPE_CHAT) ? purple_blist_find_chat(purpleAccount, convName.c_str())
+                                                             : nullptr;
+    if (purpleChat)
+        purple_blist_remove_chat(purpleChat);
+    if (chatId.valid()) {
+        std::string setting = lastMessageSetting(chatId);
+        purple_account_remove_setting(purpleAccount, setting.c_str());
+    }
+
+    gchar      *logDir = purple_log_get_log_dir((type == PURPLE_CONV_TYPE_CHAT) ? PURPLE_LOG_CHAT : PURPLE_LOG_IM,
+                                                convName.c_str(), purpleAccount);
+    GDir       *dir    = logDir ? g_dir_open(logDir, 0, NULL) : nullptr;
+    const char *entry;
+    while (dir && (entry = g_dir_read_name(dir))) {
+        gchar *path = g_build_filename(logDir, entry, NULL);
+        if (g_remove(path) != 0)
+            purple_debug_warning(config::pluginId, "Cannot remove %s from the log\n", path);
+        g_free(path);
+    }
+    if (dir) {
+        g_dir_close(dir);
+        if (g_rmdir(logDir) != 0)
+            purple_debug_warning(config::pluginId, "Cannot remove the log's directory %s\n", logDir);
+    }
+    g_free(logDir);
+}
+
+void removeGroupChat(PurpleAccount *purpleAccount, const td::td_api::chat &chat)
+{
+    std::string  chatName   = getPurpleChatName(chat);
+    PurpleChat  *purpleChat = purple_blist_find_chat(purpleAccount, chatName.c_str());
+
+    if (!purpleChat)
+        return;
+    // One of a chat not joined, shown in a conversation, stays as long as the program runs, under
+    // the chat's latest title, which the tab takes from it
+    if (purple_blist_node_get_flags(PURPLE_BLIST_NODE(purpleChat)) & PURPLE_BLIST_NODE_FLAG_NO_SAVE) {
+        const char *oldName = purple_chat_get_name(purpleChat);
+        if (chat.title_ != oldName)
+            purple_blist_alias_chat(purpleChat, chat.title_.c_str());
+        return;
+    }
+    purple_blist_remove_chat(purpleChat);
+    // TODO: uncomment when updateNewChat(chat_list=NULL) + updateChatChatList(non-NULL) at login
+    // no longer removes chat
+    //std::string setting = lastMessageSetting(getId(chat));
+    //purple_account_remove_setting(purpleAccount, setting.c_str());
+}
+
+void removePrivateChat(TdAccountData &account, const td::td_api::chat &chat)
+{
+    // TODO: uncomment when updateNewChat(chat_list=NULL) + updateChatChatList(non-NULL) at login
+    // no longer removes chat
+    //std::string setting = lastMessageSetting(getId(chat));
+    //purple_account_remove_setting(account.purpleAccount, setting.c_str());
+}
+
+void saveChatLastMessage(TdAccountData &account, ChatId chatId, MessageId messageId)
+{
+    std::string setting = lastMessageSetting(chatId);
+    std::string value = std::to_string(messageId.value());
+    purple_account_set_string(account.purpleAccount, setting.c_str(), value.c_str());
+}
+
+MessageId getChatLastMessage(TdAccountData &account, ChatId chatId)
+{
+    std::string setting = lastMessageSetting(chatId);
+    const char *value = purple_account_get_string(account.purpleAccount, setting.c_str(), NULL);
+
+    return value ? MessageId::fromString(value) : MessageId();
+}
+
+std::string makeBasicDisplayName(const td::td_api::user &user)
+{
+    std::string result = user.first_name_;
+    if (!result.empty() && !user.last_name_.empty())
+        result += ' ';
+    result += user.last_name_;
+
+    return result;
+}
+
+// Posted in a channel, by nobody named: its sender is "Channel post"
+bool isAnonymousChannelPost(const td::td_api::chat &chat, const td::td_api::message &message)
+{
+    return !message.is_outgoing_ && (getBasicGroupId(chat).valid() || getSupergroupId(chat).valid()) &&
+           !getSenderUserId(message).valid() && message.author_signature_.empty() && message.is_channel_post_;
+}
+
+std::string getIncomingGroupchatSenderPurpleName(const td::td_api::chat &chat, const td::td_api::message &message,
+                                                 const TdAccountData &account)
+{
+    if (!message.is_outgoing_ && (getBasicGroupId(chat).valid() || getSupergroupId(chat).valid())) {
+        UserId senderId = getSenderUserId(message);
+        if (senderId.valid())
+            return account.getDisplayName(senderId);
+        else if (!message.author_signature_.empty())
+            return message.author_signature_;
+        else if (message.is_channel_post_) {
+            // TRANSLATOR: The "sender" of a message that was posted to a channel. Will be used like a username.
+            return _("Channel post");
+        } else if (message.forward_info_ && message.forward_info_->origin_)
+            switch (message.forward_info_->origin_->get_id()) {
+            case td::td_api::messageOriginUser::ID:
+                return account.getDisplayName(getSenderUserId(static_cast<const td::td_api::messageOriginUser &>(*message.forward_info_->origin_)));
+            case td::td_api::messageOriginHiddenUser::ID:
+                return static_cast<const td::td_api::messageOriginHiddenUser &>(*message.forward_info_->origin_).sender_name_;
+            case td::td_api::messageOriginChannel::ID:
+                return static_cast<const td::td_api::messageOriginChannel&>(*message.forward_info_->origin_).author_signature_;
+            }
+    }
+
+    // For outgoing messages, our name will be used instead
+    // For private and secret chats, sender name will be determined from the chat instead
+
+    return "";
+}
+
+std::string getForwardSource(const td::td_api::messageForwardInfo &forwardInfo,
+                             const TdAccountData &account)
+{
+    if (!forwardInfo.origin_)
+        return "";
+
+    switch (forwardInfo.origin_->get_id()) {
+        case td::td_api::messageOriginUser::ID:
+            return account.getDisplayName(getSenderUserId(static_cast<const td::td_api::messageOriginUser &>(*forwardInfo.origin_)));
+        case td::td_api::messageOriginHiddenUser::ID:
+            return static_cast<const td::td_api::messageOriginHiddenUser &>(*forwardInfo.origin_).sender_name_;
+        case td::td_api::messageOriginChannel::ID: {
+            const td::td_api::chat *chat = account.getChat(getChatId(static_cast<const td::td_api::messageOriginChannel&>(*forwardInfo.origin_)));
+            if (chat)
+                return chat->title_;
+        }
+    }
+
+    return "";
+}
+
+void getNamesFromAlias(const char *alias, std::string &firstName, std::string &lastName)
+{
+    if (!alias) alias = "";
+
+    const char *name1end = alias;
+    while (*name1end && isspace(*name1end)) name1end++;
+    while (*name1end && !isspace(*name1end)) name1end++;
+    firstName = std::string(alias, name1end-alias);
+
+    const char *name2start = name1end;
+    while (*name2start && isspace(*name2start)) name2start++;
+    lastName = name2start;
+}
+
+static void findChatsByComponents(PurpleBlistNode *node,
+                                  const char *joinString, const char *groupName, int groupType,
+                                  std::vector<PurpleChat *> &result)
+{
+    PurpleBlistNodeType nodeType = purple_blist_node_get_type(node);
+
+    if (nodeType == PURPLE_BLIST_CHAT_NODE) {
+        PurpleChat *chat           = PURPLE_CHAT(node);
+        GHashTable *components     = purple_chat_get_components(chat);
+        const char *nodeName       = getChatName(components);
+        const char *nodeJoinString = getChatJoinString(components);
+        const char *nodeGroupName  = getChatGroupName(components);
+        int         nodeGroupType  = getChatGroupType(components);
+
+        if (!nodeName) nodeName = "";
+        if (!nodeJoinString) nodeJoinString = "";
+        if (!nodeGroupName) nodeGroupName = "";
+
+        if (!strcmp(nodeName, "") && !strcmp(nodeJoinString, joinString)) {
+            if ((*joinString != '\0') ||
+                (!strcmp(nodeGroupName, groupName) && (nodeGroupType == groupType)))
+            {
+                result.push_back(chat);
+            }
+        }
+    }
+
+    for (PurpleBlistNode *child = purple_blist_node_get_first_child(node); child;
+         child = purple_blist_node_get_sibling_next(child))
+    {
+        findChatsByComponents(child, joinString, groupName, groupType, result);
+    }
+}
+
+std::vector<PurpleChat *>findChatsByJoinString(const std::string &joinString)
+{
+    std::vector<PurpleChat *> result;
+
+    for (PurpleBlistNode *root = purple_blist_get_root(); root;
+         root = purple_blist_node_get_sibling_next(root)) // LOL
+    {
+        findChatsByComponents(root, joinString.c_str(), "", 0, result);
+    }
+
+    return result;
+}
+
+std::vector<PurpleChat *> findChatsByNewGroup(const char *name, int type)
+{
+    std::vector<PurpleChat *> result;
+
+    for (PurpleBlistNode *root = purple_blist_get_root(); root;
+         root = purple_blist_node_get_sibling_next(root)) // LOL
+    {
+        findChatsByComponents(root, "", name, type, result);
+    }
+
+    return result;
+}
+
+static void setChatMembers(PurpleConvChat *purpleChat,
+                           const std::vector<td::td_api::object_ptr<td::td_api::chatMember>> &members,
+                           const TdAccountData &account)
+{
+    GList *flags = NULL;
+    std::vector<std::string> nameData;
+
+    for (const auto &member: members) {
+        if (!member || !isGroupMember(member->status_))
+            continue;
+
+        const td::td_api::user *user = account.getUser(getUserId(*member));
+        if (!user || (user->type_ && (user->type_->get_id() == td::td_api::userTypeDeleted::ID)))
+            continue;
+
+        const char *phoneNumber = getCanonicalPhoneNumber(user->phone_number_.c_str());
+        if (!strcmp(getCanonicalPhoneNumber(purple_account_get_username(account.purpleAccount)), phoneNumber))
+            // This is us, so libpurple will map phone number to alias
+            nameData.emplace_back(purple_account_get_username(account.purpleAccount));
+        else
+            // As the user's messages name them: shown by the contact's alias, or the display name the
+            // plugin gives for it
+            nameData.emplace_back(getPurpleBuddyName(*user));
+
+        PurpleConvChatBuddyFlags flag;
+        if (member->status_->get_id() == td::td_api::chatMemberStatusCreator::ID)
+            flag = PURPLE_CBFLAGS_FOUNDER;
+        else if (member->status_->get_id() == td::td_api::chatMemberStatusAdministrator::ID)
+            flag = PURPLE_CBFLAGS_OP;
+        else
+            flag = PURPLE_CBFLAGS_NONE;
+        flags = g_list_append(flags, GINT_TO_POINTER(flag));
+    }
+
+    GList *names = NULL;
+    for (const std::string &name: nameData)
+        names = g_list_append(names, const_cast<char *>(name.c_str()));
+
+    purple_conv_chat_clear_users(purpleChat);
+    purple_conv_chat_add_users(purpleChat, names, NULL, flags, false);
+    g_list_free(names);
+    g_list_free(flags);
+}
+
+void updateChatConversation(PurpleConvChat *purpleChat, const td::td_api::basicGroupFullInfo &groupInfo,
+                    const TdAccountData &account)
+{
+    purple_conv_chat_set_topic(purpleChat, NULL, groupInfo.description_.c_str());
+    setChatMembers(purpleChat, groupInfo.members_, account);
+}
+
+void updateChatConversation(PurpleConvChat *purpleChat, const td::td_api::supergroupFullInfo &groupInfo,
+                    const TdAccountData &account)
+{
+    purple_conv_chat_set_topic(purpleChat, NULL, groupInfo.description_.c_str());
+}
+
+void updateSupergroupChatMembers(PurpleConvChat* purpleChat, const td::td_api::chatMembers& members,
+                                 const TdAccountData& account)
+{
+    setChatMembers(purpleChat, members.members_, account);
+}
+
+namespace {
+// A stretch of formatting in plain text, by byte offsets
+struct TextFormat {
+    enum class Kind { Bold, Italic, Underline, Strikethrough, Link };
+    size_t      start;
+    size_t      end;
+    Kind        kind;
+    std::string url;
+};
+}
+
+static void addFormat(std::vector<TextFormat> &formats, size_t start, size_t end, TextFormat::Kind kind,
+                      const std::string &url = std::string())
+{
+    if (start < end)
+        formats.push_back({start, end, kind, url});
+}
+
+// The value of an attribute of a tag, unescaped; empty if it has none
+static std::string getAttribute(const std::string &tag, const char *name)
+{
+    std::string lowered = tag;
+    for (char &c: lowered)
+        c = g_ascii_tolower(c);
+    std::string key = std::string(" ") + name + "=";
+    size_t      at  = lowered.find(key);
+    if (at == std::string::npos)
+        return std::string();
+    at += key.size();
+    size_t end;
+    if ((at < tag.size()) && ((tag[at] == '"') || (tag[at] == '\''))) {
+        end = tag.find(tag[at], at + 1);
+        at++;
+    } else
+        end = tag.find_first_of(" >", at);
+    std::string value = tag.substr(at, (end == std::string::npos) ? std::string::npos : end - at);
+    char       *unescaped = purple_unescape_html(value.c_str());
+    value = unescaped;
+    g_free(unescaped);
+    return value;
+}
+
+// Pidgin's markup as plain text and the formatting Telegram can carry of it; font faces, colors
+// and sizes are dropped
+static void parseMarkup(const std::string &html, std::string &text, std::vector<TextFormat> &formats)
+{
+    struct Open {
+        std::string                   name;
+        size_t                        start;
+        std::vector<TextFormat::Kind> kinds;
+        std::string                   url;
+    };
+    std::vector<Open> open;
+    text.clear();
+    formats.clear();
+    for (size_t i = 0; i < html.size(); ) {
+        if (html[i] != '<') {
+            size_t      end = html.find('<', i);
+            std::string run = html.substr(i, (end == std::string::npos) ? std::string::npos : end - i);
+            char       *unescaped = purple_unescape_html(run.c_str());
+            text += unescaped;
+            g_free(unescaped);
+            i = (end == std::string::npos) ? html.size() : end;
+            continue;
+        }
+        size_t      end     = html.find('>', i);
+        std::string tag     = html.substr(i, (end == std::string::npos) ? std::string::npos : end + 1 - i);
+        i = (end == std::string::npos) ? html.size() : end + 1;
+        bool        closing = (tag.size() > 1) && (tag[1] == '/');
+        size_t      nameAt  = closing ? 2 : 1;
+        size_t      nameEnd = tag.find_first_of(" />", nameAt);
+        std::string name    = tag.substr(nameAt, (nameEnd == std::string::npos) ? std::string::npos : nameEnd - nameAt);
+        for (char &c: name)
+            c = g_ascii_tolower(c);
+
+        if (name == "br") {
+            text += '\n';
+            continue;
+        }
+        if (closing) {
+            // The innermost of that name, and whatever was left open inside it
+            for (size_t j = open.size(); j-- > 0; )
+                if (open[j].name == name) {
+                    for (size_t k = open.size(); k-- > j; )
+                        for (TextFormat::Kind kind: open[k].kinds)
+                            addFormat(formats, open[k].start, text.size(), kind, open[k].url);
+                    open.resize(j);
+                    break;
+                }
+            continue;
+        }
+        if ((tag.size() > 1) && (tag[tag.size() - 2] == '/'))
+            continue;
+
+        Open item{name, text.size(), {}, std::string()};
+        if ((name == "b") || (name == "strong"))
+            item.kinds.push_back(TextFormat::Kind::Bold);
+        else if ((name == "i") || (name == "em"))
+            item.kinds.push_back(TextFormat::Kind::Italic);
+        else if (name == "u")
+            item.kinds.push_back(TextFormat::Kind::Underline);
+        else if ((name == "s") || (name == "strike") || (name == "del"))
+            item.kinds.push_back(TextFormat::Kind::Strikethrough);
+        else if (name == "a") {
+            item.url = getAttribute(tag, "href");
+            if (!item.url.empty())
+                item.kinds.push_back(TextFormat::Kind::Link);
+        } else if (name == "span") {
+            std::string style = getAttribute(tag, "style");
+            for (char &c: style)
+                c = g_ascii_tolower(c);
+            if (style.find("bold") != std::string::npos)
+                item.kinds.push_back(TextFormat::Kind::Bold);
+            if (style.find("italic") != std::string::npos)
+                item.kinds.push_back(TextFormat::Kind::Italic);
+            if (style.find("underline") != std::string::npos)
+                item.kinds.push_back(TextFormat::Kind::Underline);
+            if (style.find("line-through") != std::string::npos)
+                item.kinds.push_back(TextFormat::Kind::Strikethrough);
+        }
+        open.push_back(std::move(item));
+    }
+    for (size_t k = open.size(); k-- > 0; )
+        for (TextFormat::Kind kind: open[k].kinds)
+            addFormat(formats, open[k].start, text.size(), kind, open[k].url);
+
+    // A link that is its own address Telegram finds by itself
+    formats.erase(std::remove_if(formats.begin(), formats.end(), [&text](const TextFormat &format) {
+        return (format.kind == TextFormat::Kind::Link) &&
+               (text.compare(format.start, format.end - format.start, format.url) == 0);
+    }), formats.end());
+    // In the order of the text, the outer first, however Pidgin wrote its tags
+    std::stable_sort(formats.begin(), formats.end(), [](const TextFormat &a, const TextFormat &b) {
+        return (a.start != b.start) ? (a.start < b.start) :
+               (a.end != b.end)     ? (a.end > b.end) : (a.kind < b.kind);
+    });
+}
+
+static int32_t getUtf16Length(const std::string &text, size_t start, size_t end)
+{
+    int32_t length = 0;
+    for (const char *s = text.c_str() + start; s < text.c_str() + end; s = g_utf8_next_char(s))
+        length += (g_utf8_get_char(s) > 0xFFFF) ? 2 : 1;
+    return length;
+}
+
+// The text from start to end, with its formatting as Telegram's entities
+static td::td_api::object_ptr<td::td_api::formattedText>
+makeFormattedText(const std::string &text, const std::vector<TextFormat> &formats, size_t start, size_t end)
+{
+    auto result = td::td_api::make_object<td::td_api::formattedText>();
+    result->text_ = text.substr(start, end - start);
+    for (const TextFormat &format: formats) {
+        size_t from = std::max(format.start, start);
+        size_t to   = std::min(format.end, end);
+        if (from >= to)
+            continue;
+        td::td_api::object_ptr<td::td_api::TextEntityType> type;
+        switch (format.kind) {
+        case TextFormat::Kind::Bold:
+            type = td::td_api::make_object<td::td_api::textEntityTypeBold>();
+            break;
+        case TextFormat::Kind::Italic:
+            type = td::td_api::make_object<td::td_api::textEntityTypeItalic>();
+            break;
+        case TextFormat::Kind::Underline:
+            type = td::td_api::make_object<td::td_api::textEntityTypeUnderline>();
+            break;
+        case TextFormat::Kind::Strikethrough:
+            type = td::td_api::make_object<td::td_api::textEntityTypeStrikethrough>();
+            break;
+        case TextFormat::Kind::Link:
+            type = td::td_api::make_object<td::td_api::textEntityTypeTextUrl>(format.url);
+            break;
+        }
+        result->entities_.push_back(td::td_api::make_object<td::td_api::textEntity>(
+            getUtf16Length(text, start, from), getUtf16Length(text, from, to), std::move(type)));
+    }
+    return result;
+}
+
+td::td_api::object_ptr<td::td_api::formattedText> parseFormattedText(const std::string &html)
+{
+    std::string             text;
+    std::vector<TextFormat> formats;
+    parseMarkup(html, text, formats);
+    return makeFormattedText(text, formats, 0, text.size());
+}
+
+bool isSameFormattedText(const td::td_api::formattedText &a, const td::td_api::formattedText &b)
+{
+    if ((a.text_ != b.text_) || (a.entities_.size() != b.entities_.size()))
+        return false;
+    // Telegram's own serialization compares the types, URLs included
+    for (size_t i = 0; i < a.entities_.size(); i++)
+        if (td::td_api::to_string(a.entities_[i]) != td::td_api::to_string(b.entities_[i]))
+            return false;
+    return true;
+}
+
+struct MessagePart {
+    bool                    isImage = false; // or another attachment, with its caption
+    int                     imageId = 0;
+    PlaceholderUse          attachment; // pasted, its placeholder in the message
+    std::string             uploadPath; // where it is, by the name it goes under
+    std::string             text;
+    std::vector<TextFormat> formats; // within text
+};
+
+static size_t splitTextChunk(MessagePart &part, const char *text, size_t length, TdAccountData &account)
+{
+    enum {MIN_LENGTH_LIMIT = 8};
+    unsigned lengthLimit = part.isImage ? account.options.maxCaptionLength : account.options.maxMessageLength;
+    if (lengthLimit == 0)
+        purple_debug_warning(config::pluginId, "No %s length limit\n", part.isImage ? "caption" : "message");
+    else if (lengthLimit <= MIN_LENGTH_LIMIT)
+        purple_debug_warning(config::pluginId, "%u is a ridiculous %s length limit\n",
+                             lengthLimit, part.isImage ? "caption" : "message");
+    if ((lengthLimit <= MIN_LENGTH_LIMIT) || (length <= lengthLimit)) {
+        part.text = std::string(text, length);
+        return length;
+    }
+
+    // Try to truncate at a line break, with no lower length limit in case of image caption
+    unsigned newlineSplitLowerLimit = part.isImage ? 1 : lengthLimit/2;
+    for (unsigned chunkLength = lengthLimit; chunkLength >= newlineSplitLowerLimit; chunkLength--)
+        if (text[chunkLength-1] == '\n') {
+            part.text = std::string(text, chunkLength-1);
+            return chunkLength;
+        }
+
+    // Try to truncate to a whole number of utf-8 characters
+    size_t      chunkLen;
+    const char *pos = g_utf8_find_prev_char(text, text+lengthLimit);
+    if (pos != NULL) {
+        const char *next = g_utf8_find_next_char(pos, NULL);
+        if (next == text+lengthLimit)
+            chunkLen = lengthLimit;
+        else
+            chunkLen = pos-text;
+    } else
+        chunkLen = lengthLimit;
+    part.text = std::string(text, chunkLen);
+    return chunkLen;
+}
+
+static void appendText(std::vector<MessagePart> &parts, const char *s, size_t len, TdAccountData &account)
+{
+    // An attachment's caption starts past the space or line break after its placeholder
+    if (!parts.empty() && parts.back().attachment.attachment && parts.back().text.empty())
+        while (len) {
+            size_t skip = 0;
+            if (strchr(" \t\r\n", *s))
+                skip = 1;
+            else if ((len >= 4) && !g_ascii_strncasecmp(s, "<br>", 4))
+                skip = 4;
+            if (!skip)
+                break;
+            s += skip;
+            len -= skip;
+        }
+    if (len != 0) {
+        if (parts.empty())
+            parts.emplace_back();
+
+        std::string             newText;
+        std::vector<TextFormat> formats;
+        parseMarkup(std::string(s, len), newText, formats);
+
+        const char *remaining    = newText.c_str();
+        size_t      lenRemaining = newText.size();
+        while (lenRemaining) {
+            size_t start       = remaining - newText.c_str();
+            size_t chunkLength = splitTextChunk(parts.back(), remaining, lenRemaining, account);
+            // The part's share of the formatting
+            for (const TextFormat &format: formats) {
+                size_t from = std::max(format.start, start);
+                size_t to   = std::min(format.end, start + parts.back().text.size());
+                if (from < to)
+                    parts.back().formats.push_back({from - start, to - start, format.kind, format.url});
+            }
+            lenRemaining -= chunkLength;
+            remaining += chunkLength;
+            if (lenRemaining)
+                parts.emplace_back();
+        }
+    }
+}
+
+static void parseMessage(const char *message, std::vector<MessagePart> &parts, TdAccountData &account)
+{
+    parts.clear();
+    if (!message)
+        return;
+
+    const char *s         = message;
+    const char *textStart = message;
+
+    while (*s) {
+        bool  isImage = false;
+        long  imageId;
+        char *pastImage = NULL;
+
+        PlaceholderUse attachment;
+        size_t         placeholderLength = 0;
+        // Bracketed, within a line, its text as written, unescaped from the message's HTML
+        const char *close = (*s == '[') ? strpbrk(s + 1, "[]\n<") : nullptr;
+        if (close && (*close == ']') && !account.pastedAttachments.items.empty()) {
+            std::string bracketed(s, close + 1);
+            char       *written = purple_unescape_html(bracketed.c_str());
+            attachment = findPasted(account.pastedAttachments, written ? written : bracketed);
+            g_free(written);
+            placeholderLength = bracketed.size();
+        }
+
+        if (attachment.attachment) {
+            appendText(parts, textStart, s-textStart, account);
+            parts.emplace_back();
+            parts.back().isImage    = true;
+            parts.back().attachment = attachment;
+            s += placeholderLength;
+            textStart = s;
+            continue;
+        }
+
+        if (!strncasecmp(s, "<img id=\"", 9)) {
+            const char *idString = s+9;
+
+            imageId = strtol(idString, &pastImage, 10);
+            if ((pastImage != idString) && !strncmp(pastImage, "\">", 2) && (imageId <= INT32_MAX) &&
+                (imageId >= INT32_MIN))
+            {
+                isImage = true;
+                pastImage += 2;
+                if (*pastImage == '\n')
+                    pastImage++;
+            }
+        }
+
+        if (isImage) {
+            appendText(parts, textStart, s-textStart, account);
+            parts.emplace_back();
+            parts.back().isImage = true;
+            parts.back().imageId = imageId;
+            s = pastImage;
+            textStart = pastImage;
+        } else
+            s++;
+    }
+
+    appendText(parts, textStart, s-textStart, account);
+}
+
+// Samples, at 48 kHz, an Opus packet decodes to, by its table of contents (RFC 6716, 3.1)
+static unsigned getOpusPacketSamples(const unsigned char *packet, size_t length)
+{
+    if (!length)
+        return 0;
+    static const unsigned silk[]   = {480, 960, 1920, 2880};
+    static const unsigned hybrid[] = {480, 960};
+    static const unsigned celt[]   = {120, 240, 480, 960};
+    unsigned config = packet[0] >> 3;
+    unsigned frame  = (config < 12) ? silk[config % 4] : (config < 16) ? hybrid[config % 2] : celt[config % 4];
+    unsigned code   = packet[0] & 3;
+    unsigned frames = (code == 0) ? 1 : (code < 3) ? 2 : (length > 1) ? (packet[1] & 0x3F) : 0;
+    return frame * frames;
+}
+
+namespace {
+// An Ogg page of a file read: where it is, its granule position, serial number and length
+struct OggPage {
+    size_t   offset;
+    uint64_t granule;
+    uint32_t serial;
+    bool     continued; // its first packet began on the page before
+    size_t   segments;
+    size_t   length;
+};
+}
+
+static bool readOggPage(const std::vector<unsigned char> &data, size_t offset, OggPage &page)
+{
+    enum { HEADER = 27 };
+    if ((offset + HEADER > data.size()) || memcmp(&data[offset], "OggS", 4) || data[offset + 4])
+        return false;
+    const unsigned char *p = &data[offset];
+    page.offset    = offset;
+    page.granule   = 0;
+    for (int b = 7; b >= 0; b--)
+        page.granule = (page.granule << 8) | p[6 + b];
+    page.serial    = p[14] | (p[15] << 8) | (p[16] << 16) | (uint32_t(p[17]) << 24);
+    page.continued = p[5] & 1;
+    page.segments  = p[26];
+    if (offset + HEADER + page.segments > data.size())
+        return false;
+    page.length = HEADER + page.segments;
+    for (size_t i = 0; i < page.segments; i++)
+        page.length += p[HEADER + i];
+    return offset + page.length <= data.size();
+}
+
+// An Opus recording's length, in whole seconds, at least one; 0 if it cannot be told. A granule
+// position counts the samples, at 48 kHz whatever the recording's rate, decoded up to the end of its
+// page: the last audio page's, less where the first audio page began, which need not be 0, as of a
+// recording cut out of a longer one, and less those the header says to skip (RFC 7845, 4).
+static int getOpusDuration(const std::string &path)
+{
+    enum { HEADER = 27, PRE_SKIP = 10, MAX_PAGE = 65307, RATE = 48000 };
+    FILE *file = fopen(path.c_str(), "rb");
+    if (!file)
+        return 0;
+    // The first pages: the identification header, the comments, and the first audio
+    std::vector<unsigned char> head(4 * MAX_PAGE);
+    head.resize(fread(head.data(), 1, head.size(), file));
+    OggPage first;
+    if (!readOggPage(head, 0, first) || (first.length < HEADER + first.segments + 19) ||
+        memcmp(&head[HEADER + first.segments], "OpusHead", 8))
+    {
+        fclose(file);
+        return 0;
+    }
+    const unsigned char *opusHead = &head[HEADER + first.segments];
+    uint64_t preSkip = opusHead[PRE_SKIP] | (opusHead[PRE_SKIP + 1] << 8);
+
+    // The comments' pages have no position, being no audio
+    uint64_t start = 0;
+    OggPage  page  = first;
+    while (readOggPage(head, page.offset + page.length, page))
+        if ((page.serial == first.serial) && page.granule && (page.granule != UINT64_MAX)) {
+            // Less the packets that end on it, those it begins with being the comments' or else
+            // the audio's before it
+            uint64_t samples = 0;
+            size_t   packet  = page.offset + HEADER + page.segments;
+            size_t   size    = 0;
+            bool     skip    = page.continued;
+            for (size_t i = 0; i < page.segments; i++) {
+                unsigned lacing = head[page.offset + HEADER + i];
+                size += lacing;
+                if (lacing < 255) {
+                    if (!skip)
+                        samples += getOpusPacketSamples(&head[packet], size);
+                    skip    = false;
+                    packet += size;
+                    size    = 0;
+                }
+            }
+            start = (page.granule > samples) ? page.granule - samples : 0;
+            break;
+        }
+
+    std::vector<unsigned char> tail(MAX_PAGE);
+    long size = (fseek(file, 0, SEEK_END) == 0) ? ftell(file) : -1;
+    long from = (size > MAX_PAGE) ? size - MAX_PAGE : 0;
+    tail.resize(((size > 0) && (fseek(file, from, SEEK_SET) == 0)) ? fread(tail.data(), 1, tail.size(), file) : 0);
+    fclose(file);
+    // The last page of the stream with a position: a capture pattern, version 0, the same serial number
+    for (size_t i = (tail.size() >= HEADER) ? tail.size() - HEADER + 1 : 0; i-- > 0;) {
+        const unsigned char *last = &tail[i];
+        if (memcmp(last, "OggS", 4) || last[4] ||
+            ((last[14] | (last[15] << 8) | (last[16] << 16) | (uint32_t(last[17]) << 24)) != first.serial))
+            continue;
+        uint64_t granule = 0;
+        for (int b = 7; b >= 0; b--)
+            granule = (granule << 8) | last[6 + b];
+        if ((granule == UINT64_MAX) || (granule <= start + preSkip))
+            continue;
+        uint64_t samples = granule - start - preSkip;
+        return int(std::max<uint64_t>((samples + RATE - 1) / RATE, 1));
+    }
+    return 0;
+}
+
+td::td_api::object_ptr<td::td_api::InputMessageContent>
+makeMediaContent(AttachmentKind kind, td::td_api::object_ptr<td::td_api::InputFile> file, const std::string &path,
+                 td::td_api::object_ptr<td::td_api::formattedText> caption)
+{
+    switch (kind) {
+    case AttachmentKind::Photo: {
+        auto content = td::td_api::make_object<td::td_api::inputMessagePhoto>();
+#if TDLIB_API_INPUT_PHOTO
+        content->photo_ = td::td_api::make_object<td::td_api::inputPhoto>();
+        content->photo_->photo_ = std::move(file);
+#else
+        content->photo_ = std::move(file);
+#endif
+        content->caption_ = std::move(caption);
+        return std::move(content);
+    }
+    case AttachmentKind::Video: {
+        auto content = td::td_api::make_object<td::td_api::inputMessageVideo>();
+#if TDLIB_API_INPUT_PHOTO
+        content->video_ = td::td_api::make_object<td::td_api::inputVideo>();
+        content->video_->video_ = std::move(file);
+#else
+        content->video_ = std::move(file);
+#endif
+        content->caption_ = std::move(caption);
+        return std::move(content);
+    }
+    case AttachmentKind::Voice: {
+        // Telegram draws the waveform of one sent without it flat
+        auto content = td::td_api::make_object<td::td_api::inputMessageVoiceNote>();
+#if TDLIB_API_INPUT_VOICE_NOTE
+        content->voice_note_ = td::td_api::make_object<td::td_api::inputVoiceNote>();
+        content->voice_note_->voice_note_ = std::move(file);
+        content->voice_note_->duration_   = getOpusDuration(path);
+#else
+        content->voice_note_ = std::move(file);
+        content->duration_   = getOpusDuration(path);
+#endif
+        content->caption_ = std::move(caption);
+        return std::move(content);
+    }
+    case AttachmentKind::Document:
+        break;
+    }
+    auto content = td::td_api::make_object<td::td_api::inputMessageDocument>();
+#if TDLIB_API_INPUT_PHOTO
+    content->document_ = td::td_api::make_object<td::td_api::inputDocument>();
+    content->document_->document_ = std::move(file);
+#else
+    content->document_ = std::move(file);
+#endif
+    content->caption_ = std::move(caption);
+    return std::move(content);
+}
+
+td::td_api::object_ptr<td::td_api::InputMessageContent>
+makeAttachmentContent(const PlaceholderUse &use, const std::string &uploadPath,
+                      td::td_api::object_ptr<td::td_api::formattedText> caption)
+{
+    purple_debug_misc(config::pluginId, "Sending %s\n", uploadPath.c_str());
+    return makeMediaContent(use.asFile ? AttachmentKind::Document : use.attachment->kind,
+                            td::td_api::make_object<td::td_api::inputFileLocal>(uploadPath), use.attachment->path,
+                            std::move(caption));
+}
+
+// A pasted attachment, the part's text its caption
+static td::td_api::object_ptr<td::td_api::InputMessageContent> makeAttachment(const MessagePart &part)
+{
+    return makeAttachmentContent(part.attachment, part.uploadPath,
+                                 makeFormattedText(part.text, part.formats, 0, part.text.size()));
+}
+
+ParsedEdit parseEdit(const char *message, const TdAccountData &account)
+{
+    ParsedEdit  edit;
+    std::string html;
+    for (const char *s = message ? message : ""; *s;) {
+        const char *close = (*s == '[') ? strpbrk(s + 1, "[]\n<") : nullptr;
+        if (close && (*close == ']')) {
+            std::string    bracketed(s, close + 1);
+            char          *written = purple_unescape_html(bracketed.c_str());
+            PlaceholderUse use     = findPasted(account.pastedAttachments, written ? written : bracketed);
+            g_free(written);
+            if (use.attachment) {
+                edit.attachments.push_back(use);
+                // With the space or line break after it, as when sending
+                for (s = close + 1; *s == ' ' || *s == '\n' || !g_ascii_strncasecmp(s, "<br>", 4);)
+                    s += (*s == '<') ? 4 : 1;
+                continue;
+            }
+        }
+        html += *s++;
+    }
+    edit.text = parseFormattedText(html);
+    return edit;
+}
+
+// How many attachments from the first go together as an album: one after another, captioned only by
+// the last, pictures and videos or documents only, as many as Telegram takes; a voice message goes alone
+static size_t getAlbumSize(const std::vector<MessagePart> &parts, size_t first)
+{
+    enum { MAX_ALBUM_SIZE = 10 };
+    auto isDocument = [](const MessagePart &part) {
+        return part.attachment.asFile || (part.attachment.attachment->kind == AttachmentKind::Document);
+    };
+    auto isVoice = [](const MessagePart &part) {
+        return !part.attachment.asFile && (part.attachment.attachment->kind == AttachmentKind::Voice);
+    };
+    if (isVoice(parts[first]))
+        return 1;
+    size_t size = 1;
+    while (parts[first + size - 1].text.empty() && (first + size < parts.size()) && (size < MAX_ALBUM_SIZE) &&
+           parts[first + size].attachment.attachment && !isVoice(parts[first + size]) &&
+           (isDocument(parts[first + size]) == isDocument(parts[first])))
+        size++;
+    return size;
+}
+
+int transmitMessage(ChatId chatId, const char *message, TdTransceiver &transceiver,
+                    TdAccountData &account, TdTransceiver::ResponseCb response)
+{
+    std::vector<MessagePart> parts;
+    parseMessage(message, parts, account);
+    if (parts.size() > MAX_MESSAGE_PARTS)
+        return -E2BIG;
+
+    // Nothing goes, should anything pasted be gone by now
+    for (MessagePart &part: parts) {
+        if (!part.attachment.attachment)
+            continue;
+        part.uploadPath = getUploadPath(account.pastedAttachments, part.attachment);
+        if (part.uploadPath.empty()) {
+            const td::td_api::chat *chat = account.getChat(chatId);
+            // TRANSLATOR: In-chat error message. The arguments are a pasted file's placeholder, such as [report.pdf#3], and where the file was.
+            std::string error = formatMessage(_("The message is not sent: {0} is gone from {1}."),
+                                              {part.attachment.attachment->placeholder(),
+                                               part.attachment.attachment->path});
+            if (chat)
+                showChatNotification(account, *chat, error.c_str());
+            return 0;
+        }
+    }
+
+    for (size_t i = 0; i < parts.size(); i++) {
+        const MessagePart &input = parts[i];
+        if (input.attachment.attachment) {
+            size_t   albumSize = getAlbumSize(parts, i);
+            uint64_t requestId;
+            if (albumSize == 1) {
+                auto sendMessageRequest = td::td_api::make_object<td::td_api::sendMessage>();
+                sendMessageRequest->chat_id_ = chatId.value();
+                sendMessageRequest->input_message_content_ = makeAttachment(input);
+                requestId = transceiver.sendQuery(std::move(sendMessageRequest), response);
+            } else {
+                auto sendAlbumRequest = td::td_api::make_object<td::td_api::sendMessageAlbum>();
+                sendAlbumRequest->chat_id_ = chatId.value();
+                for (size_t j = i; j < i + albumSize; j++)
+                    sendAlbumRequest->input_message_contents_.push_back(makeAttachment(parts[j]));
+                requestId = transceiver.sendQuery(std::move(sendAlbumRequest), response);
+            }
+            account.addPendingRequest<SendMessageRequest>(requestId, chatId, nullptr);
+            i += albumSize - 1;
+            continue;
+        }
+
+        td::td_api::object_ptr<td::td_api::sendMessage> sendMessageRequest = td::td_api::make_object<td::td_api::sendMessage>();
+        sendMessageRequest->chat_id_ = chatId.value();
+        char *tempFileName = NULL;
+        bool  hasImage     = false;
+
+        if (input.isImage)
+            hasImage = saveImage(input.imageId, &tempFileName);
+
+        if (hasImage) {
+            td::td_api::object_ptr<td::td_api::inputMessagePhoto> content = td::td_api::make_object<td::td_api::inputMessagePhoto>();
+#if TDLIB_API_INPUT_PHOTO
+            content->photo_ = td::td_api::make_object<td::td_api::inputPhoto>();
+            content->photo_->photo_ = td::td_api::make_object<td::td_api::inputFileLocal>(tempFileName);
+#else
+            content->photo_ = td::td_api::make_object<td::td_api::inputFileLocal>(tempFileName);
+#endif
+            content->caption_ = makeFormattedText(input.text, input.formats, 0, input.text.size());
+
+            sendMessageRequest->input_message_content_ = std::move(content);
+            purple_debug_misc(config::pluginId, "Sending photo %s\n", tempFileName);
+        } else {
+            td::td_api::object_ptr<td::td_api::inputMessageText> content = td::td_api::make_object<td::td_api::inputMessageText>();
+            content->text_ = makeFormattedText(input.text, input.formats, 0, input.text.size());
+            sendMessageRequest->input_message_content_ = std::move(content);
+        }
+
+        uint64_t requestId = transceiver.sendQuery(std::move(sendMessageRequest), response);
+        account.addPendingRequest<SendMessageRequest>(requestId, chatId, tempFileName);
+        if (tempFileName)
+            g_free(tempFileName);
+    }
+
+    return 0;
+}
+
+std::string getSenderDisplayName(const td::td_api::chat &chat, const TgMessageInfo &message,
+                                 PurpleAccount *account)
+{
+    if (message.outgoing)
+        return purple_account_get_name_for_display(account);
+    else if (isPrivateChat(chat) || getSecretChatId(chat).valid())
+        return chat.title_;
+    else
+        return message.incomingGroupchatSender;
+}
+
+static bool g_messageLinksEnabled = false;
+
+bool messageLinksEnabled()
+{
+    return g_messageLinksEnabled;
+}
+
+void setMessageLinksEnabled(bool enabled)
+{
+    g_messageLinksEnabled = enabled;
+}
+
+// <scheme><account>/<chat id>/<message id>
+static std::string makeLink(const char *scheme, PurpleAccount *account, ChatId chatId, MessageId messageId)
+{
+    gchar *accountName = g_uri_escape_string(purple_account_get_username(account), NULL, FALSE);
+    std::string result = std::string(scheme) + accountName + '/' +
+                         std::to_string(chatId.value()) + '/' + std::to_string(messageId.value());
+    g_free(accountName);
+    return result;
+}
+
+// tdlib://<account>/<chat id>/<message id>: the message, rather than its file, which may not be
+// there yet, and whose path would not outlive TDLib's file cache
+bool isLinkSchemeAllowed(const std::string &url)
+{
+    gchar *scheme  = g_uri_parse_scheme(url.c_str());
+    bool   allowed = false;
+    if (scheme) {
+        for (const char *known: {"http", "https", "tg", "mailto", "tel"})
+            allowed = allowed || !g_ascii_strcasecmp(scheme, known);
+        g_free(scheme);
+    }
+    return allowed;
+}
+
+std::string makeMessageLink(PurpleAccount *account, ChatId chatId, MessageId messageId,
+                            const std::string &variant)
+{
+    std::string result = makeLink(MESSAGE_LINK_SCHEME, account, chatId, messageId);
+    if (!variant.empty())
+        result += '/' + variant;
+    return result;
+}
+
+static bool parseLink(const char *scheme, const char *link, std::string &accountName, ChatId &chatId,
+                      MessageId &messageId, std::string &variant)
+{
+    size_t schemeLength = strlen(scheme);
+    if (strncmp(link, scheme, schemeLength))
+        return false;
+
+    gchar **parts = g_strsplit(link + schemeLength, "/", -1);
+    guint   count = g_strv_length(parts);
+    bool    valid = (count == 3) || ((count == 4) && *parts[3]);
+    variant = (count == 4) ? parts[3] : "";
+    if (valid) {
+        gchar *name = g_uri_unescape_string(parts[0], NULL);
+        valid = (name != NULL);
+        if (name)
+            accountName = name;
+        g_free(name);
+        chatId    = ChatId::fromString(parts[1]);
+        messageId = MessageId::fromString(parts[2]);
+        valid = valid && chatId.valid() && messageId.valid();
+    }
+    g_strfreev(parts);
+    return valid;
+}
+
+bool parseMessageLink(const char *link, std::string &accountName, ChatId &chatId, MessageId &messageId,
+                      std::string &variant)
+{
+    return parseLink(MESSAGE_LINK_SCHEME, link, accountName, chatId, messageId, variant);
+}
+
+static bool g_jumpLinksEnabled = false;
+
+bool jumpLinksEnabled()
+{
+    return g_jumpLinksEnabled;
+}
+
+void setJumpLinksEnabled(bool enabled)
+{
+    g_jumpLinksEnabled = enabled;
+}
+
+// tdlib-message://<account>/<chat id>/<message id>
+std::string linkToMessage(PurpleAccount *account, ChatId chatId, MessageId messageId,
+                          const std::string &markup)
+{
+    if (!g_jumpLinksEnabled || !chatId.valid() || !messageId.valid())
+        return markup;
+    return "<a href=\"" + makeLink(JUMP_LINK_SCHEME, account, chatId, messageId) + "\">" + markup + "</a>";
+}
+
+static const char LOG_MARKER_START[] = "<!--tdlib-message ";
+static const char LOG_MARKER_END[]   = "-->";
+
+static bool g_logMarkersEnabled = false;
+
+bool logMarkersEnabled()
+{
+    return g_logMarkersEnabled;
+}
+
+void setLogMarkersEnabled(bool enabled)
+{
+    g_logMarkersEnabled = enabled;
+}
+
+std::string makeLogMarker(MessageId messageId, time_t sentAt)
+{
+    std::string marker = LOG_MARKER_START + std::to_string(messageId.value());
+    if (sentAt)
+        marker += " " + std::to_string(sentAt);
+    return marker + LOG_MARKER_END;
+}
+
+bool takeLogMarker(std::string &html, MessageId *messageId, time_t *sentAt)
+{
+    size_t start = html.find(LOG_MARKER_START);
+    size_t end   = (start == std::string::npos) ? std::string::npos : html.find(LOG_MARKER_END, start);
+    if (end == std::string::npos)
+        return false;
+    size_t      numberStart = start + sizeof(LOG_MARKER_START) - 1;
+    std::string numbers     = html.substr(numberStart, end - numberStart);
+    size_t      space       = numbers.find(' ');
+    if (messageId)
+        *messageId = MessageId::fromString(numbers.substr(0, space).c_str());
+    if (sentAt)
+        *sentAt = (space == std::string::npos) ? 0 : strtoll(numbers.c_str() + space + 1, nullptr, 10);
+    html.erase(start, end + sizeof(LOG_MARKER_END) - 1 - start);
+    return true;
+}
+
+static const char LOG_ONLY_START[] = "<!--tdlib-log-only-->";
+static const char LOG_ONLY_END[]   = "<!--/tdlib-log-only-->";
+
+std::string makeLogOnly(const std::string &html)
+{
+    return LOG_ONLY_START + html + LOG_ONLY_END;
+}
+
+bool takeLogOnly(std::string &html)
+{
+    bool taken = false;
+    for (size_t start; (start = html.find(LOG_ONLY_START)) != std::string::npos; taken = true) {
+        size_t end = html.find(LOG_ONLY_END, start);
+        html.erase(start, (end == std::string::npos) ? std::string::npos : end + sizeof(LOG_ONLY_END) - 1 - start);
+    }
+    return taken;
+}
+
+void unmarkLogOnly(std::string &html)
+{
+    for (const char *marker: {LOG_ONLY_START, LOG_ONLY_END})
+        for (size_t start; (start = html.find(marker)) != std::string::npos; )
+            html.erase(start, strlen(marker));
+}
+
+static bool isSpace(char c)
+{
+    return (c == ' ') || (c == '\n') || (c == '\t') || (c == '\r');
+}
+
+std::string markChanges(const std::string &previous, const std::string &html,
+                        const std::string &removedColor, const std::string &addedColor)
+{
+    // The new text as words, and tags and spaces between them, all kept as they are
+    struct Token {
+        std::string text;
+        bool        word;
+    };
+    std::vector<Token>       tokens;
+    std::vector<std::string> newWords; // unescaped, to compare
+    for (size_t i = 0; i < html.size();) {
+        size_t end = i;
+        if (html[i] == '<') {
+            end = html.find('>', i);
+            end = (end == std::string::npos) ? html.size() : end + 1;
+        } else if (isSpace(html[i]))
+            while ((end < html.size()) && isSpace(html[end]))
+                end++;
+        else
+            while ((end < html.size()) && (html[end] != '<') && !isSpace(html[end]))
+                end++;
+        tokens.push_back({html.substr(i, end - i), (html[i] != '<') && !isSpace(html[i])});
+        if (tokens.back().word) {
+            char *word = purple_unescape_html(tokens.back().text.c_str());
+            newWords.push_back(word);
+            g_free(word);
+        }
+        i = end;
+    }
+    std::vector<std::string> oldWords;
+    for (size_t i = 0; i < previous.size();) {
+        size_t end = i;
+        while ((end < previous.size()) && !isSpace(previous[end]))
+            end++;
+        if (end > i)
+            oldWords.push_back(previous.substr(i, end - i));
+        i = end + 1;
+    }
+
+    // Words alike at either end need no comparing
+    size_t oldCount = oldWords.size(), newCount = newWords.size();
+    size_t head = 0, tail = 0;
+    while ((head < oldCount) && (head < newCount) && (oldWords[head] == newWords[head]))
+        head++;
+    while ((tail < oldCount - head) && (tail < newCount - head) &&
+           (oldWords[oldCount - 1 - tail] == newWords[newCount - 1 - tail]))
+        tail++;
+    size_t n = oldCount - head - tail, m = newCount - head - tail;
+    // Nothing but formatting or spacing changed, or too long to compare
+    if (((n == 0) && (m == 0)) || ((n + 1) * (m + 1) > 4000000))
+        return html;
+
+    // The longest common subsequence of the words between, from each pair of places on
+    std::vector<unsigned> common((n + 1) * (m + 1), 0);
+    auto at = [m](size_t i, size_t j) { return i * (m + 1) + j; };
+    for (size_t i = n; i-- > 0; )
+        for (size_t j = m; j-- > 0; )
+            common[at(i, j)] = (oldWords[head + i] == newWords[head + j])
+                               ? common[at(i + 1, j + 1)] + 1
+                               : std::max(common[at(i + 1, j)], common[at(i, j + 1)]);
+    // Which new words are added, and which old ones are removed before each new one (or at the end)
+    std::vector<bool>        added(newCount, false);
+    std::vector<std::string> removed(newCount + 1);
+    for (size_t i = 0, j = 0; (i < n) || (j < m); ) {
+        if ((i < n) && (j < m) && (oldWords[head + i] == newWords[head + j])) {
+            i++;
+            j++;
+        } else if ((i < n) && ((j == m) || (common[at(i + 1, j)] >= common[at(i, j + 1)]))) {
+            // Removed words go before added ones in their place
+            std::string &before = removed[head + j];
+            if (!before.empty())
+                before += ' ';
+            before += oldWords[head + i++];
+        } else
+            added[head + j++] = true;
+    }
+
+    auto background = [](const std::string &color, const std::string &html) {
+        return "<font back=\"" + color + "\">" + html + "</font>";
+    };
+    auto putBack = [&](const std::string &words) {
+        gchar      *escaped = g_markup_escape_text(words.c_str(), -1);
+        std::string result  = background(removedColor, escaped);
+        g_free(escaped);
+        return result;
+    };
+    std::string result;
+    if (newCount == 0)
+        result = putBack(removed[0]) + ' ';
+    // Removed words go outside the formatting of the words around them: before the tags opening the
+    // next word, after those closing the previous one
+    size_t outside = 0;
+    for (size_t i = 0, word = 0; i < tokens.size(); i++) {
+        if (!tokens[i].word) {
+            result += tokens[i].text;
+            if ((tokens[i].text[0] != '<') || (tokens[i].text.compare(0, 2, "</") == 0))
+                outside = result.size();
+            continue;
+        }
+        if (!removed[word].empty())
+            result.insert(outside, putBack(removed[word]) + ' ');
+        result += added[word] ? background(addedColor, tokens[i].text) : tokens[i].text;
+        outside = result.size();
+        word++;
+    }
+    if ((newCount > 0) && !removed[newCount].empty())
+        result.insert(outside, (isSpace(result[outside - 1]) ? "" : " ") + putBack(removed[newCount]));
+    return result;
+}
+
+bool parseJumpLink(const char *link, std::string &accountName, ChatId &chatId, MessageId &messageId)
+{
+    std::string variant;
+    return parseLink(JUMP_LINK_SCHEME, link, accountName, chatId, messageId, variant) && variant.empty();
+}
+
+std::string getDownloadXferPeerName(ChatId chatId,
+                                    const TgMessageInfo &message,
+                                    TdAccountData &account)
+{
+    const td::td_api::chat *chat = account.getChat(chatId);
+    if (chat) {
+        const td::td_api::user *privateUser = account.getUserByPrivateChat(*chat);
+        if (privateUser)
+            return getPurpleBuddyName(*privateUser);
+        auto secretChatId = getSecretChatId(*chat);
+        if (secretChatId.valid())
+            return getSecretChatBuddyName(secretChatId);
+    }
+    return message.incomingGroupchatSender;
+}
+
+void notifySendFailed(const td::td_api::updateMessageSendFailed &sendFailed, TdAccountData &account)
+{
+    if (sendFailed.message_ && sendFailed.error_) {
+        const td::td_api::chat *chat = account.getChat(getChatId(*sendFailed.message_));
+        if (chat) {
+            std::string errorMessage = formatMessage(errorCodeMessage(), {std::to_string(sendFailed.error_->code_),
+                                                     sendFailed.error_->message_});
+            // TRANSLATOR: In-chat error message, argument will be text.
+            errorMessage = formatMessage(_("Failed to send message: {}"), errorMessage);
+            showChatNotification(account, *chat, errorMessage.c_str(), sendFailed.message_->date_,
+                                 (PurpleMessageFlags)0);
+        }
+    }
+}
+
+template<typename T>
+T zeroIfNegative(T value)
+{
+    return (value >= 0) ? value : 0;
+}
+
+void updateOption(const td::td_api::updateOption &option, TdAccountData &account)
+{
+    if ((option.name_ == "version") && option.value_ &&
+        (option.value_->get_id() == td::td_api::optionValueString::ID))
+    {
+        purple_debug_misc(config::pluginId, "tdlib version: %s\n",
+                            static_cast<const td::td_api::optionValueString &>(*option.value_).value_.c_str());
+    } else if ((option.name_ == "message_caption_length_max") && option.value_ &&
+        (option.value_->get_id() == td::td_api::optionValueInteger::ID))
+    {
+        account.options.maxCaptionLength = zeroIfNegative(static_cast<const td::td_api::optionValueInteger &>(*option.value_).value_);
+    } else if ((option.name_ == "message_text_length_max") && option.value_ &&
+        (option.value_->get_id() == td::td_api::optionValueInteger::ID))
+    {
+        account.options.maxMessageLength = zeroIfNegative(static_cast<const td::td_api::optionValueInteger &>(*option.value_).value_);
+    } else if ((option.name_ == "my_id") && option.value_ &&
+        (option.value_->get_id() == td::td_api::optionValueInteger::ID))
+    {
+        account.options.myUserId = static_cast<const td::td_api::optionValueInteger &>(*option.value_).value_;
+    } else
+        purple_debug_misc(config::pluginId, "Option update %s\n", option.name_.c_str());
+}
+
+void populateGroupChatList(PurpleRoomlist *roomlist, const std::vector<const td::td_api::chat *> &chats,
+                           const TdAccountData &account)
+{
+    for (const td::td_api::chat *chat: chats)
+        if (account.isGroupChatWithMembership(*chat)) {
+            PurpleRoomlistRoom *room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM,
+                                                                chat->title_.c_str(), NULL);
+            purple_roomlist_room_add_field (roomlist, room, getPurpleChatName(*chat).c_str());
+            BasicGroupId groupId = getBasicGroupId(*chat);
+            if (groupId.valid()) {
+                const td::td_api::basicGroupFullInfo *fullInfo = account.getBasicGroupInfo(groupId);
+                if (fullInfo && !fullInfo->description_.empty())
+                    purple_roomlist_room_add_field(roomlist, room, fullInfo->description_.c_str());
+            }
+            SupergroupId supergroupId = getSupergroupId(*chat);
+            if (supergroupId.valid()) {
+                const td::td_api::supergroupFullInfo *fullInfo = account.getSupergroupInfo(supergroupId);
+                if (fullInfo && !fullInfo->description_.empty())
+                    purple_roomlist_room_add_field(roomlist, room, fullInfo->description_.c_str());
+            }
+            purple_roomlist_room_add(roomlist, room);
+        }
+    purple_roomlist_set_in_progress(roomlist, FALSE);
+}
+
+AccountThread::AccountThread(PurpleAccount* purpleAccount)
+{
+    m_accountUserName   = purple_account_get_username(purpleAccount);
+    m_accountProtocolId = purple_account_get_protocol_id(purpleAccount);
+}
+
+void AccountThread::threadFunc()
+{
+    run();
+    g_idle_add(&AccountThread::mainThreadCallback, this);
+}
+
+static bool g_singleThread = false;
+// Started and not yet handed back to the main loop, which alone starts and takes them
+static std::set<AccountThread *> g_running;
+
+void AccountThread::setSingleThread()
+{
+    g_singleThread = true;
+}
+
+bool AccountThread::isSingleThread()
+{
+    return g_singleThread;
+}
+
+void AccountThread::startThread()
+{
+    if (!g_singleThread) {
+        if (!m_thread.joinable()) {
+            g_running.insert(this);
+            m_thread = std::thread(std::bind(&AccountThread::threadFunc, this));
+        }
+    } else {
+        run();
+        mainThreadCallback(this);
+    }
+}
+
+gboolean AccountThread::mainThreadCallback(gpointer data)
+{
+    AccountThread  *self     = static_cast<AccountThread *>(data);
+    g_running.erase(self);
+    PurpleAccount  *account  = purple_accounts_find(self->m_accountUserName.c_str(),
+                                                    self->m_accountProtocolId.c_str());
+    PurpleTdClient *tdClient = account ? getTdClient(account) : nullptr;
+    if (self->m_thread.joinable())
+        self->m_thread.join();
+
+    // Without its account, nobody is left to take the thread over
+    if (tdClient)
+        self->callback(tdClient);
+    else
+        delete self;
+
+    return FALSE; // this idle callback will not be called again
+}
+
+void AccountThread::finishAll()
+{
+    for (AccountThread *thread: g_running) {
+        if (thread->m_thread.joinable())
+            thread->m_thread.join();
+        // Its hand-back, queued as it ended, is called off
+        g_idle_remove_by_data(thread);
+        delete thread;
+    }
+    g_running.clear();
+}
+
+void *findFrontEndSymbol(const char *name)
+{
+    gpointer symbol = NULL;
+    GModule *program = g_module_open(NULL, (GModuleFlags)0);
+    if (program) {
+        if (!g_module_symbol(program, name, &symbol))
+            symbol = NULL;
+        g_module_close(program);
+    }
+    return symbol;
+}
+
+std::string deriveKey(const std::string &password, const std::string &salt, unsigned iterations)
+{
+    enum { KEY_SIZE = 32 };
+    guint8 key[KEY_SIZE];
+    if (password.size() > INT_MAX || salt.size() > INT_MAX || iterations > INT_MAX || iterations == 0 ||
+        PKCS5_PBKDF2_HMAC(password.data(), static_cast<int>(password.size()),
+                          reinterpret_cast<const unsigned char *>(salt.data()), static_cast<int>(salt.size()),
+                          static_cast<int>(iterations), EVP_sha256(), sizeof(key), key) != 1)
+        return {};
+    return std::string(reinterpret_cast<const char *>(key), sizeof(key));
+}
+
+bool isPlainSqliteFile(const std::string &path)
+{
+    static const char HEADER[] = "SQLite format 3";
+    char  start[sizeof(HEADER)] = {};
+    FILE *f    = fopen(path.c_str(), "rb");
+    bool  read = f && (fread(start, 1, sizeof(start), f) == sizeof(start));
+    if (f)
+        fclose(f);
+    // The header's terminating NUL included
+    return read && !memcmp(start, HEADER, sizeof(HEADER));
+}

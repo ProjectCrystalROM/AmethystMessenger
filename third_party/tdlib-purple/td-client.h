@@ -1,0 +1,448 @@
+#ifndef _TD_CLIENT_H
+#define _TD_CLIENT_H
+
+#include "account-data.h"
+#include "buildopt.h"
+#include "client-utils.h"
+#include "pidgin-ui.h"
+#include <td/telegram/Client.h>
+#include <purple.h>
+#include <map>
+#include <set>
+
+enum class BasicGroupMembership: uint8_t {
+    Invalid,
+    Creator,
+    NonCreator,
+};
+
+// A message's picture, video or file, to be replaced, as Telegram lets it be, once the message is edited
+struct SentMedia {
+    bool           present = false;
+    AttachmentKind kind    = AttachmentKind::Document;
+    int32_t        fileId  = 0;
+    std::string    path;    // here, if it is here yet
+    std::string    name;
+    std::string    mimeType;
+};
+
+class PurpleTdClient {
+public:
+    PurpleTdClient(PurpleAccount *acct, ITransceiverBackend *testBackend);
+    ~PurpleTdClient();
+
+    static void setLogLevel(int level);
+    static void setTdlibLogCallback(td::ClientManager::LogMessageCallbackPtr callback);
+    static std::string getBaseDatabasePath();
+    int  sendMessage(const char *buddyName, const char *message);
+    void sendTyping(const char *buddyName, bool isTyping);
+    void sendReadReceipts(PurpleConversation *conversation);
+    // Fills a tab just opened with the chat's latest messages, as set; false if it is to be tried
+    // again later, the chat being busy or not known yet
+    bool fillConversation(PurpleConversation *conv);
+    // A tab come into view filled anew, as if just opened, if its chat has messages unread: the
+    // tab may have kept at its end, as Pidgin does, while they were written to it unseen
+    void showFirstUnread(PurpleConversation *conv);
+    // Its title marked, or not, as its chat has reactions unread
+    void markConversation(PurpleConversation *conv);
+    // The tab's chat is open in TDLib while it is shown, for the updates of its messages that TDLib
+    // fetches only for open chats; its messages on screen, then, are seen, and so read
+    void conversationShown(PurpleConversation *conv, bool shown);
+    void messagesViewed(PurpleConversation *conv, const std::vector<MessageId> &messageIds);
+    // The contact's or chat's pictures are fetched unasked now
+    void mediaDownloadsAllowed(PurpleBlistNode *node);
+    // Online, for Telegram, while the user is not idle, as libpurple tells; the chats shown are
+    // closed meanwhile
+    void setIdle(bool idle);
+    void showEarlierMessages(PurpleConversation *conv, double filling = 0);
+    void showLaterMessages(PurpleConversation *conv);
+    void showNewestMessages(PurpleConversation *conv);
+    bool getReactionTip(PurpleConversation *conv, MessageId messageId, const std::string &key, std::string &tip);
+    // A reaction on a message's line clicked: ours taken back, or given if not; the paid one asked
+    // for, as from the message's menu
+    void reactionClicked(PurpleConversation *conv, MessageId messageId, const std::string &key);
+    void buttonClicked(ChatId chatId, MessageId messageId, const std::string &key);
+    bool hasUnreadReactions(PurpleBuddy *buddy);
+
+    void addContact(const std::string &purpleName, const std::string &alias, const std::string &groupName);
+    void buddyMoved(const char *buddyName, const char *groupName);
+    void chatMoved(PurpleChat *purpleChat);
+    void renameContact(const char *buddyName, const char *newAlias);
+    void removeContactAndPrivateChat(const std::string &buddyName, bool contact);
+    void deleteLocalChat(ChatId chatId);
+    void getUsers(const char *username, std::vector<const td::td_api::user *> &users);
+    // A chat member named idNNN, as chats name them: the display name they are shown by, and the
+    // name of the conversation with them; empty for another name
+    std::string getChatMemberAlias(const char *name);
+    std::string getChatMemberImName(const char *name);
+
+    // A chat not known yet is asked for, and joined once found
+    bool joinChat(const char *chatName, bool lookUp = true);
+    void joinChatByInviteLink(const char *inviteLink);
+    void joinChatByGroupName(const char *joinString, const char *groupName);
+    // A Telegram link, such as tg://resolve?domain=...&post=..., to a chat or a message in it:
+    // its tab is presented, at the message; what cannot be followed is told in a dialog
+    void openLink(const std::string &link);
+    // Its tab presented, at the message if valid, or tried again later while the chat is busy; the
+    // link numbered as it was handed over, to be given up for a later one
+    void showLinkedChat(const std::string &link, unsigned serial, ChatId chatId, MessageId messageId,
+                        unsigned tries = 0);
+    bool isLatestLink(unsigned serial);
+    void createGroup(const char *name, int type, const std::vector<std::string> &basicGroupMembers);
+    BasicGroupMembership getBasicGroupMembership(const char *purpleChatName);
+    void leaveGroup(const std::string &purpleChatName, bool deleteSupergroup, bool forOthers = true);
+    // Whether the chat can be deleted for all its members, and has others than us to ask about
+    bool canDeleteForOthers(const char *purpleChatName);
+    int  sendGroupMessage(int purpleChatId, const char *message);
+    void setGroupDescription(int purpleChatId, const char *description);
+    void kickUserFromChat(PurpleConversation *conv, const char *name);
+    void addUserToChat(int purpleChatId, const char *name);
+    void showInviteLink(const std::string &purpleChatName);
+    void getGroupChatList(PurpleRoomlist *roomlist);
+
+    void setTwoFactorAuth(const char *oldPassword, const char *newPassword, const char *hint,
+                        const char *email);
+
+    void sendFileToChat(PurpleXfer *xfer, const char *purpleName, PurpleConversationType type,
+                        int purpleChatId);
+    void cancelUpload(PurpleXfer *xfer);
+    // Placeholders of what is pasted, which messages sent have it in place of
+    std::vector<const PastedAttachment *> addPasted(const ClipboardContent &content);
+    // The edit of a message, as written in its HTML, the number its media went by, if any: the text or
+    // caption changed, or the media replaced, as far as Telegram allows
+    void sendEdit(ChatId chatId, MessageId messageId, bool isCaption, unsigned media, const std::string &html);
+    // In the conversation's input field, in Pidgin, or else a dialog: the media, if any, by its placeholder
+    void askEditMessage(ChatId chatId, MessageId messageId, const std::string &text, const std::string &html,
+                        bool isCaption, time_t date, const SentMedia &media);
+    PlaceholderUse                        findPasted(const std::string &placeholder);
+
+    bool startVoiceCall(const char *buddyName);
+    bool terminateCall(PurpleConversation *conv);
+
+    void createSecretChat(const char *buddyName);
+
+    // A link to the message's file was clicked: fetches the file, if need be, and opens it, or puts it
+    // on the clipboard; a variant, if given, names one of the sizes a photo or video comes in
+    enum class FileUse { Open, Copy };
+    void openMessageFile(ChatId chatId, MessageId messageId, const std::string &variant = std::string(),
+                         FileUse use = FileUse::Open);
+    // The file is dragged out of the conversation: fetched as for opening it, and told where it is
+    // once it is here, and whether it is a picture; the path is empty if it cannot be had
+    void dragMessageFile(ChatId chatId, MessageId messageId, const std::string &variant,
+                         std::function<void(const std::string &path, bool picture)> found);
+    // The same, of a message in the conversation
+    void dragConversationFile(PurpleConversation *conv, MessageId messageId,
+                              std::function<void(const std::string &path, bool picture)> found);
+    // The link before a message in Pidgin's tab was clicked: pops up its menu
+    // Adds the message's items to the menu opened on it
+    void showMessageMenu(ChatId chatId, MessageId messageId, OpenMenuRef openMenu);
+    // False if the conversation's chat is not known
+    bool showMessagePopup(PurpleConversation *conv, MessageId messageId, const OpenMenuRef &openMenu);
+    // Whether the conversation is the chat's, as a link in it may name another
+    bool isConversationOf(PurpleConversation *conv, ChatId chatId);
+    void setMessageReaction(ChatId chatId, MessageId messageId, const std::string &emoji, bool chosen);
+    void setMessageReaction(ChatId chatId, MessageId messageId, td::td_api::object_ptr<td::td_api::ReactionType> type,
+                            const std::string &emoji, bool chosen);
+    void askPaidReaction(ChatId chatId, MessageId messageId);
+    // What the dialogs of a message's menu do, once answered
+    void editMessage(ChatId chatId, MessageId messageId, td::td_api::object_ptr<td::td_api::formattedText> text,
+                     bool isCaption);
+    void deleteMessage(ChatId chatId, MessageId messageId, bool forAll);
+    void cancelEntryEdit(ChatId chatId);
+    void showEditCancelled(ChatId chatId);
+
+    // Somewhere a message may be forwarded to: a buddy, or a chat, of an account in the buddy list,
+    // this one or another; a chat of another account only while its conversation is open
+    struct ForwardDestination {
+        std::string accountName;  // as purple_account_get_username has it
+        std::string protocolId;
+        bool        isChat = false;
+        std::string name;         // the buddy's, or the chat's, as libpurple has it
+        std::string label;        // as offered
+    };
+    // Asks where to forward the message, out of what the buddy list offers, and forwards it there
+    void askForwardMessage(ChatId chatId, MessageId messageId);
+    void copyMessageLink(ChatId chatId, MessageId messageId);
+    // Asks which of these, the buddy list's, to forward the message to
+    void askForwardMessage(ChatId chatId, MessageId messageId, std::vector<ForwardDestination> destinations);
+    // Through Telegram, if the destination is this account's; otherwise through the destination's
+    // account: the text as a message, the file by file transfer, where that account can send one
+    void forwardMessage(ChatId chatId, MessageId messageId, const ForwardDestination &to);
+    static std::vector<ForwardDestination> getForwardDestinations();
+    // Labels that are the same as another's are made to differ
+    static void makeForwardLabelsUnique(std::vector<ForwardDestination> &destinations);
+
+    // Blocks a user, or unblocks, as Pidgin's list of blocked users changes
+    void setUserBlocked(UserId userId, bool blocked);
+    // Whether Telegram takes a report about the chat as a whole, not about its messages
+    bool canReportChat(ChatId chatId);
+    // The private chat with the user, if there is one
+    ChatId getPrivateChatId(UserId userId);
+    // Reports the chat, or messages in it, to Telegram's moderators: the reason is asked for, in as
+    // many steps as Telegram has, and then details, if Telegram wants them. How it went is told in
+    // the chat reported from, if not that one.
+    void reportChat(ChatId chatId, const std::vector<MessageId> &messageIds,
+                    const std::string &optionId = std::string(), const std::string &text = std::string(),
+                    ChatId reportedFrom = ChatId());
+    // Reports a user, as the sender of a message in a group, by our private chat with them
+    void reportSender(ChatId groupChatId, UserId userId);
+
+    // The client of an account by its name, if it is connected
+    static PurpleTdClient *findConnected(const char *accountName);
+
+    // The local database's password: what one typed is for, and its key, made of it in a thread
+    // of its own; asked for again, or changed from the account's action
+    enum class DatabaseKeyUse { Open, Confirm, Decrypt, Change };
+    void databasePasswordEntered(DatabaseKeyUse use, const std::string &password);
+    void databasePasswordCancelled(DatabaseKeyUse use);
+    void databaseKeyDerived(DatabaseKeyUse use, const std::string &password, const std::string &key);
+    void changeDatabasePassword(const std::string &password);
+    // That encrypting the database anew rewrites it, which takes as long as it is big
+    std::string getDatabaseRewriteWarning();
+private:
+    bool requestBuddyChat(PurpleConversation *conv);
+    using TdObjectPtr   = td::td_api::object_ptr<td::td_api::Object>;
+    using ResponseCb    = void (PurpleTdClient::*)(uint64_t requestId, TdObjectPtr object);
+
+    void       processUpdate(td::td_api::Object &object);
+    void       processAuthorizationState(td::td_api::AuthorizationState &authState);
+
+    // Login sequence start
+    bool       addProxy();
+    void       addProxyResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       getProxiesResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       removeOldProxies();
+    // Auth-input fallback (see m_authInputPending); declared before first use.
+    enum class AuthInput { None, Code, Password, DisplayName };
+
+    void       sendTdlibParameters();
+    // How the database is being opened: as the account's settings say, unencrypted or with the
+    // account's password; or, that failing, unencrypted for the password, to encrypt it then, or
+    // with the password asked for to decrypt it
+    enum class DatabaseOpening { Plain, Password, PlainForPassword, Decrypt };
+    void       openDatabase(const std::string &key, DatabaseOpening opening);
+    void       databaseOpenResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       askDatabasePassword(DatabaseKeyUse use);
+    void       wrongDatabasePassword();
+    bool       checkMessagesEncrypted();
+    void       setDatabaseKey(const std::string &key, const std::string &password, bool encrypted);
+    void       sendPhoneNumber();
+    void       requestAuthCode(const td::td_api::authenticationCodeInfo *authCodeInfo);
+    void       requestPassword(const td::td_api::authorizationStateWaitPassword &pwInfo);
+    void       registerUser();
+    static void requestCodeEntered(PurpleTdClient *self, const gchar *code);
+    static void requestCodeCancelled(PurpleTdClient *self);
+    static void passwordEntered(PurpleTdClient *self, const gchar *code);
+    static void passwordCancelled(PurpleTdClient *self);
+    static void displayNameEntered(PurpleTdClient *self, const gchar *name);
+    static void displayNameCancelled(PurpleTdClient *self);
+    // Fallback: prompt for an auth value through a "Telegram" IM conversation
+    // and remember which value we're waiting for (see m_authInputPending).
+    void       promptAuthInputViaChat(AuthInput type, const std::string &message);
+    // Keep the "Telegram" conversation out of the log while a value is asked for in it, and end that
+    void       keepAuthInputUnlogged();
+    void       endAuthInput();
+    void       removeAuthInputBuddy();
+    void       authResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       notifyAuthError(const td::td_api::object_ptr<td::td_api::Object> &response);
+    void       setPurpleConnectionInProgress();
+    void       onLoggedIn();
+    void       getContactsResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       getChatsResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       requestMissingPrivateChats();
+    void       loginCreatePrivateChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    // List of chats is requested after connection is ready, and when response is received,
+    // then we report to libpurple that we are connected
+    void       onChatListReady();
+    void       showLoggedChats();
+    void       loggedChatLookedUp(ChatId chatId, TdObjectPtr object);
+    void       checkBuddiesDeleted();
+    void       checkBuddyDeletedResponse(TdObjectPtr object);
+    // Login sequence end
+
+    void       onIncomingMessage(td::td_api::object_ptr<td::td_api::message> message);
+    void       updateChatLastMessage(td::td_api::updateChatLastMessage &lastMessage);
+
+    void       updateUserStatus(UserId userId, td::td_api::object_ptr<td::td_api::UserStatus> status);
+    void       updateUser(td::td_api::object_ptr<td::td_api::user> user);
+    void       downloadProfilePhoto(const td::td_api::user &user);
+    void       avatarDownloadResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       updateGroup(td::td_api::object_ptr<td::td_api::basicGroup> group);
+    void       updateSupergroup(td::td_api::object_ptr<td::td_api::supergroup> group);
+    void       updateChat(const td::td_api::chat *chat);
+    void       updateUserInfo(const td::td_api::user &user, const td::td_api::chat *privateChat);
+    void       downloadChatPhoto(const td::td_api::chat &chat);
+    void       requestBasicGroupFullInfo(BasicGroupId groupId);
+    void       requestSupergroupFullInfo(SupergroupId groupId);
+    void       groupInfoResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       supergroupInfoResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       supergroupMembersResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       supergroupAdministratorsResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       updateGroupFull(BasicGroupId groupId, td::td_api::object_ptr<td::td_api::basicGroupFullInfo> groupInfo);
+    void       updateSupergroupFull(SupergroupId groupId, td::td_api::object_ptr<td::td_api::supergroupFullInfo> groupInfo);
+
+    void       addContactById(UserId userId, const std::string &phoneNumber, const std::string &alias,
+                              const std::string &groupName, bool sharePhoneNumber = true);
+    void       addChat(td::td_api::object_ptr<td::td_api::chat> chat);
+    void       handleUserChatAction(const td::td_api::updateChatAction &updateChatAction);
+    void       showUserChatAction(UserId userId, bool isTyping);
+    void       addBuddySearchChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       importContactResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       addContactResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       addContactCreatePrivateChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       notifyFailedContact(const std::string &errorMessage);
+    void       joinChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       joinGroupSearchChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    // A chat of the buddy list that TDLib has not told of: by its id, from what TDLib has stored,
+    // then by its public name, if saved, from Telegram
+    void       lookUpChat(ChatId chatId, const std::string &chatName);
+    void       chatLookedUp(ChatId chatId, const std::string &chatName, td::td_api::object_ptr<td::td_api::Object> object,
+                            bool byName);
+    void       linkTypeResponse(const std::string &link, unsigned serial, td::td_api::object_ptr<td::td_api::Object> object);
+    void       publicChatFound(const std::string &link, unsigned serial, td::td_api::object_ptr<td::td_api::Object> object);
+    void       messageLinkResponse(const std::string &link, unsigned serial,
+                                   td::td_api::object_ptr<td::td_api::Object> object);
+    void       linkNotFollowed(const std::string &link, const std::string &reason);
+    void       deleteSupergroupResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       setGroupDescriptionResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       chatActionResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+
+    void       onAnimatedStickerConverted(AccountThread *arg);
+    void       onReactionStickerConverted(AccountThread *arg);
+    void       sendMessageCreatePrivateChatResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       uploadResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+
+    void       sendMessageResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void       removeTempFile(ChatId chatId, int64_t messageId);
+    void       checkTempFileUploads();
+    void       tempFileCheckResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+
+    void        setTwoFactorAuthResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+    void        requestRecoveryEmailConfirmation(const std::string &emailInfo);
+    static void verifyRecoveryEmail(PurpleTdClient *self, const char *code);
+    void        updateOnline();
+    void        refreshOpenChats();
+    void        verifyRecoveryEmailResponse(uint64_t requestId, td::td_api::object_ptr<td::td_api::Object> object);
+
+    // A front-end without request UI ops makes purple_request_input (login code / 2FA password /
+    // display name) fail. Fall back to prompting through a "Telegram" IM conversation and
+    // capturing the user's reply in tgprpl_send_im -> sendMessage. This tracks which auth value
+    // we're waiting for.
+    AuthInput             m_authInputPending = AuthInput::None;
+    // Whether logging of the "Telegram" conversation was turned off for the value, and was on before
+    bool                  m_authInputUnlogged = false;
+    bool                  m_authInputWasLogging = false;
+
+    PurpleAccount        *m_account;
+    TdTransceiver         m_transceiver;
+    TdAccountData         m_data;
+    int32_t               m_lastAuthState = 0;
+    DatabaseOpening       m_databaseOpening = DatabaseOpening::Plain;
+    // Made of the account's password, while the database is being opened for it
+    std::string           m_passwordKey;
+    bool                  m_storageOptimizerSet = false;
+    // Shown while TDLib encrypts the database anew, until it is done
+    void                 *m_rekeyNotice = nullptr;
+    bool                  m_rekeying    = false;
+    std::vector<UserId>   m_usersForNewPrivateChats;
+    // Of buddies whose tabs are opened, though TDLib did not tell of them
+    std::set<UserId>      m_buddyChatsRequested;
+    // At first login every contact needs a private chat materialized. Doing this strictly
+    // serially (one createPrivateChat per server round-trip) is very slow for large contact
+    // lists. Keep a window of concurrent requests in flight instead, which cuts N*RTT down to
+    // ~(N/window)*RTT. m_privateChatRequestsInFlight tracks the window.
+    int                   m_privateChatRequestsInFlight = 0;
+    bool                  m_chatListReady = false;
+    // Chats opened, and which of their messages were last told to be seen
+    std::map<ChatId, std::vector<MessageId>>    m_openChats;
+    bool                  m_idle   = false;
+    bool                  m_online = false; // as last told to TDLib, which starts offline
+    bool                  m_isProxyAdded = false;
+    std::vector<PurpleRoomlist *>               m_pendingRoomLists;
+#if TDLIB_API_ADDED_PROXY
+    using AddedProxy   = td::td_api::addedProxy;
+    using AddedProxies = td::td_api::addedProxies;
+#else
+    using AddedProxy   = td::td_api::proxy;
+    using AddedProxies = td::td_api::proxies;
+#endif
+    td::td_api::object_ptr<AddedProxy>          m_addedProxy;
+    td::td_api::object_ptr<AddedProxies>        m_proxies;
+
+    struct ChatGap {
+        ChatId    chatId;
+        MessageId lastMessage;
+    };
+    std::vector<ChatGap> m_chatGaps;
+
+    // Files being opened, or opened lately, so that clicking a link again while the program for the
+    // file is still starting does not start another
+    struct OpenedFile {
+        bool   inProgress;
+        time_t openedAt;
+    };
+    // By the link clicked: the chat, the message, the variant and the use
+    std::map<std::string, OpenedFile> m_openedFiles;
+
+    // The message's file, downloaded first, if need be, with what it is, and whether it is a picture:
+    // a photo or a still sticker, copied as a picture too; the path is empty if it cannot be had, the
+    // error saying why
+    using FileFetched = std::function<void(const std::string &path, const std::string &description, bool picture,
+                                           const std::string &error)>;
+    void fetchMessageFile(ChatId chatId, MessageId messageId, const std::string &variant, FileFetched fetched);
+    void fetchMessageFileResponse(ChatId chatId, const std::string &variant, FileFetched fetched, TdObjectPtr object);
+    void showFileError(ChatId chatId, FileUse use, const std::string &description, const std::string &reason);
+    void sendPaidReaction(ChatId chatId, MessageId messageId, int64_t starCount);
+    void reportMenuError(ChatId chatId, const std::string &failure, const TdObjectPtr &object);
+    void reportMenuError(ChatId chatId, const std::string &notice);
+    void pressButton(ChatId chatId, MessageId messageId, const td::td_api::inlineKeyboardButton &button);
+    void showButtonNotice(ChatId chatId, const std::string &notice);
+    void reportReactionError(ChatId chatId, const std::string &emoji, const TdObjectPtr &object);
+    static void paidReactionEntered(void *data, const char *starCount);
+    static void paidReactionCancelled(void *data);
+    struct ShownReaction {
+        std::string emoji;
+        int32_t     count;
+        bool        chosen;
+    };
+    // What a message's menu offers, besides the reactions it may have
+    struct MessageMenu {
+        std::vector<ShownReaction> reactions;
+        bool                       canEdit          = false;
+        bool                       isCaption        = false;
+        std::string                text;
+        std::string                html;             // with what formatting can be edited
+        time_t                     date             = 0;
+        bool                       canDeleteForSelf = false;
+        bool                       canDeleteForAll  = false;
+        bool                       canReport        = false;
+        bool                       canForward       = false;
+        bool                       canGetLink       = false; // a public one, of a public chat
+        UserId                     sender;           // someone else who sent it
+        bool                       senderBlocked    = false;
+        SentMedia                  media;
+        bool                       hasFile          = false;
+        bool                       picture          = false; // the file is
+    };
+    void requestMessageReactions(ChatId chatId, MessageId messageId, const MessageMenu &menu,
+                                 const OpenMenuRef &openMenu);
+    void noteUserBlocked(UserId userId, bool blocked);
+    void askBlockUser(UserId userId);
+    void reportChatResponse(ChatId chatId, const std::vector<MessageId> &messageIds, ChatId reportedFrom,
+                            TdObjectPtr object);
+    void showMessageMenuResponse(ChatId chatId, MessageId messageId, const MessageMenu &menu,
+                                 const OpenMenuRef &openMenu, TdObjectPtr object);
+    void askDeleteMessage(ChatId chatId, MessageId messageId, bool forAll);
+    void forwardToChat(ChatId chatId, MessageId messageId, ChatId toChatId, const std::string &label);
+    void forwardElsewhere(ChatId chatId, MessageId messageId, const ForwardDestination &to, TdObjectPtr object);
+    void showForwardFailure(ChatId chatId, const std::string &label, const std::string &reason);
+    static void forwardDestinationChosen(void *data, PurpleRequestFields *fields);
+    static void forwardDestinationCancelled(void *data, PurpleRequestFields *fields);
+    void showEditRefused(ChatId chatId, const std::string &reason);
+    void replaceMedia(ChatId chatId, MessageId messageId, const PlaceholderUse &use,
+                      std::shared_ptr<td::td_api::formattedText> caption);
+    void finishOpeningFile(ChatId chatId, const std::string &key, FileUse use, const std::string &description,
+                           const std::string &path, bool picture, const std::string &error);
+};
+
+#endif

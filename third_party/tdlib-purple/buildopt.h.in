@@ -1,0 +1,48 @@
+#ifndef _BUILDOPT_H
+#define _BUILDOPT_H
+
+#define TDLIB_VERSION_NUMBER ${TDLIB_VERSION_NUMBER}
+#define TDLIB_VERSION_STRING "${TDLIB_VERSION}"
+
+#if TDLIB_VERSION_NUMBER == 0
+#warning "Cannot tell which version of TDLib this is: its API changes were guessed by probing its headers (see cmake/tdlib-version.cmake)"
+#endif
+
+// Incompatible changes to the TDLib API, each named after what it brought, and
+// 1 for a TDLib from the release that brought it on (cmake/tdlib-version.cmake).
+// importContacts and addContact take importedContact, not contact (1.8.56)
+#define TDLIB_API_IMPORTED_CONTACT ${TDLIB_API_IMPORTED_CONTACT}
+// proxy became addedProxy, which holds the server, port and type in a proxy
+// (1.8.61)
+#define TDLIB_API_ADDED_PROXY      ${TDLIB_API_ADDED_PROXY}
+// inputMessagePhoto and inputMessageDocument wrap their file in an inputPhoto
+// and inputDocument, which also hold what used to sit beside it (1.8.65)
+#define TDLIB_API_INPUT_PHOTO      ${TDLIB_API_INPUT_PHOTO}
+// a live location is a messageLiveLocation, no longer a messageLocation with a
+// live_period (1.8.65)
+#define TDLIB_API_LIVE_LOCATION    ${TDLIB_API_LIVE_LOCATION}
+// inputMessageVoiceNote wraps its file in an inputVoiceNote, which also holds
+// its duration and waveform (1.8.66)
+#define TDLIB_API_INPUT_VOICE_NOTE ${TDLIB_API_INPUT_VOICE_NOTE}
+// inlineKeyboardButton has a style, as of a warning, and an icon (1.8.61)
+#define TDLIB_API_BUTTON_STYLE     ${TDLIB_API_BUTTON_STYLE}
+// a message may be rich, laid out in blocks as an instant view page is (1.8.65)
+#define TDLIB_API_RICH_MESSAGE     ${TDLIB_API_RICH_MESSAGE}
+// joinChat and joinChatByInviteLink tell how joining went by a ChatJoinResult,
+// not ok and a chat; it may be asking to join, or need a bot's approval (1.8.65)
+#define TDLIB_API_CHAT_JOIN_RESULT ${TDLIB_API_CHAT_JOIN_RESULT}
+
+
+#define TEST_SOURCE_DIR "${CMAKE_SOURCE_DIR}/test"
+
+#cmakedefine NoLottie
+
+#cmakedefine NoTranslations
+
+#define LOCALE_DIR "${LOCALE_DIR}"
+
+#cmakedefine NoVoip
+
+#cmakedefine NoPidgin
+
+#endif
