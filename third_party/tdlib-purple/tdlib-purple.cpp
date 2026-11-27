@@ -1525,7 +1525,10 @@ static void registerMessageLinks()
     setJumpLinksEnabled(messageLinksEnabled() && pidginUiFound() &&
                         g_registerProtocol(JUMP_LINK_SCHEME, jumpLinkClicked, jumpLinkContextMenu));
     // Not where messages go on to other clients, markup and all
-    setLogMarkersEnabled(!canDisableReadReceipts());
+    // Log-only entries are hidden and removed by the Pidgin conversation-window hook. Without
+    // that hook (for example in the Windows NoPidgin build), writing them into the conversation
+    // displays a second copy of every outgoing message after TDLib acknowledges it.
+    setLogMarkersEnabled(pidginUiFound() && !canDisableReadReceipts());
     setMessagePopupHandler(messagePopupOpened);
     // Only where links to messages' files work
     if (messageLinksEnabled())
