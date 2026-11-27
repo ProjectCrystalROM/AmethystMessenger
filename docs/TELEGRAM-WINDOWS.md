@@ -45,11 +45,10 @@ topic listed as a child room. They are also added to the buddy list as a
 Pidgin contact group with each topic as a chat room beneath it. Joining a topic
 opens its own conversation. The plugin loads the latest 50 messages when that
 conversation is first opened, sends text to the selected topic, and uses
-topic-scoped read receipts. The Vista tester confirmed topic history fetch and text display;
-the history order is being adjusted so newest messages appear at the bottom. This build enables
-the Pidgin conversation integration required for the plugin's normal one-to-one history fetch;
-that DM path still needs Vista confirmation. Older topic-history paging and topic-specific file
-uploads are not implemented yet.
+topic-scoped read receipts. The Vista tester confirmed history displays oldest-to-newest,
+with the newest messages at the bottom. Scrolling fetches older topic history, and text is
+displayed in both directions. One-to-one DM history also works. Topic-specific file uploads
+remain unsupported.
 
 ## Build the plugin
 
