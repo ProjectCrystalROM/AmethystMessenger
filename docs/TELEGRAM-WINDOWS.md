@@ -12,13 +12,16 @@ target. The Telegram DLL is built for Vista (PE subsystem 6.0) and imports
 Vista-era APIs including `GetTickCount64`, SRW locks, and condition variables.
 Consequently Telegram is available on Vista SP2 and later, while the XP-targeted
 application and its other plugins remain usable on XP. The DLL does not load on
-XP. PE compatibility is based on static inspection. Telegram login, buddy
-addition, and text messaging have been verified on the Vista SP2 test machine;
-forum topic behavior has not yet been tested on Vista.
+XP. PE compatibility is based on static inspection. On the Vista SP2 test
+machine, Telegram login and buddy addition were verified; the tester later
+confirmed send and receive in one-to-one DMs, group chats, and forum topics.
+DM/topic history is chronological and paginated. Topic-specific attachments
+remain unsupported.
 
-The plugin loads in the Linux-hosted Wine smoke test and is initialized by
-libpurple. That verifies plugin packaging and ABI loading only, not Telegram
-authentication, message exchange, or target-Windows compatibility.
+The plugin also loads in the Linux-hosted Wine smoke test. Wine verifies
+packaging and ABI loading; Telegram authentication and messaging were tested
+separately on the Vista SP2 machine. The other listed Windows versions remain
+untested at runtime.
 
 ## Add a Telegram account
 

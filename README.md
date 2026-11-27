@@ -14,7 +14,7 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 
 | Platform | Status |
 | --- | --- |
-| Windows Vista SP2 x86 and x64 (32-bit app through WOW64) | Previously tested with the integrated MSN client for sign-in and adding a buddy. The Amethyst rebranded package still needs a fresh installation test. |
+| Windows Vista SP2 (architecture not recorded) | Tester confirms Telegram DM, group chat, and topic send/receive, plus Discord DM and server send/receive. |
 | Windows XP SP3 x86 | Build targets the Windows XP API and PE subsystem. Static assessment only; runtime test pending. |
 | Windows XP Professional x64 SP2 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
 | Windows Vista SP2 x64 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
@@ -42,11 +42,11 @@ The integrated msn-pecan protocol is packaged as `plugins/libmsn.dll` with proto
 
 ## Telegram
 
-The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Forum supergroups appear as Pidgin contact groups, with each visible topic as a chat room beneath its group. On Vista, the tester confirmed topic history and text display in chronological order; scrolling fetches older history. One-to-one DM history also works. Topic-specific attachment sending remains unsupported. Wine startup testing confirms libpurple loads the plugin, and Vista account authentication, regular chat messaging, and forum-topic history have been tested. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, feature limits, and the Vista requirement.
+The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Forum supergroups appear as Pidgin contact groups, with each visible topic as a chat room beneath its group. On Vista, the tester confirmed DM, group chat, and topic send and receive. Topic and DM history are chronological and paginated; scrolling fetches older history. Topic-specific attachment sending remains unsupported. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, and feature limits.
 
 ## Discord
 
-The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. Wine testing confirmed plugin loading and that declining turns the account off. Live Discord login and messaging have not been tested.
+The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. The Vista tester confirmed DM and server send and receive. QR login and other Discord features remain unverified.
 
 ## Source, attribution, and contributions
 
