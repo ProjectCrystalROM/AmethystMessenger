@@ -7,8 +7,8 @@ libpurple runtime remains in use; an application upgrade was not needed.
 
 ## Compatibility
 
-The Amethyst executable and existing protocols retain the Windows XP x86
-target. The Telegram DLL is built for Vista (PE subsystem 6.0) and imports
+The Amethyst executable and existing protocols retain the Windows XP target.
+The Telegram DLL is built for Vista (PE subsystem 6.0) and imports
 Vista-era APIs including `GetTickCount64`, SRW locks, and condition variables.
 Consequently Telegram is available on Vista SP2 and later, while the XP-targeted
 application and its other plugins remain usable on XP. The DLL does not load on

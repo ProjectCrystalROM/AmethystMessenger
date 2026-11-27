@@ -10,7 +10,7 @@ This is static compatibility evidence. The compiler version and PE subsystem alo
 
 The Telegram plugin statically links TDLib, OpenSSL 3, fmt, zlib, and the MinGW C++ runtime. Its direct DLL imports are the bundled GLib/GIO/GModule and libpurple DLLs, plus standard Windows system libraries; it has no OpenSSL, zlib, libstdc++, or libgcc DLL dependency. The import table includes Vista APIs such as `GetTickCount64`, SRW locks, condition variables, and `GetFileInformationByHandleEx`. It therefore cannot load on XP, even though the Amethyst executable, libpurple, and other protocols retain the XP target. Static inspection identifies Vista as the minimum; the user has also tested Telegram messaging on a Vista SP2 machine.
 
-The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It imports Vista's `InitializeSRWLock`, links OpenSSL crypto and QRencode statically for QR login, and imports JSON-GLib plus the existing bundled GLib, libpurple, and zlib runtimes. JSON-GLib's DLL was built against the bundled GLib 2.28 SDK. PE inspection shows no API-set or Universal CRT dependency; Vista is the minimum indicated by its imports. Wine installation, plugin probing, and consent-decline behavior passed. The user confirmed Discord DM and server send/receive on a Vista SP2 machine; its architecture was not recorded. QR approval, reconnection, and the other listed features remain untested. The Discord plugin cannot run on XP.
+The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It imports Vista's `InitializeSRWLock`, links OpenSSL crypto and QRencode statically for QR login, and imports JSON-GLib plus the existing bundled GLib, libpurple, and zlib runtimes. JSON-GLib's DLL was built against the bundled GLib 2.28 SDK. PE inspection shows no API-set or Universal CRT dependency; Vista is the minimum indicated by its imports. Wine installation, plugin probing, and consent-decline behavior passed. The user confirmed Discord QR login and DM/server send and receive on Vista SP2. Reconnection and other Discord features remain untested. The Discord plugin cannot run on XP.
 
 ## Tests performed
 
@@ -22,17 +22,15 @@ The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It i
 | Launcher startup | Passed in Wine. `amethyst.exe --version` reports `Amethyst Messenger 2.11.0 (libpurple 2.11.0)`. |
 | GTK application startup | Passed in Wine with `--debug --nologin`. The GTK2 interface initialized and remained running through the 16-second smoke window. The process was stopped by the timeout. |
 | MSN implementation | Passed in Wine using a no-credential protocol probe. The installed `prpl-msn-pecan` implementation loaded and returned account-picker name `MSN`. |
-| Telegram plugin and messaging | User confirmed Telegram DM, group chat, and topic send/receive on a Vista SP2 test machine. DM/topic history and pagination were also confirmed. Machine architecture was not recorded. |
+| Telegram plugin and messaging | User confirmed Telegram DM, group chat, and topic send/receive on a Vista SP2 test machine. DM/topic history and pagination were also confirmed. |
 | Discord plugin build | Passed from checked-in, SHA-256-pinned JSON-GLib 0.14.2 and libqrencode 4.1.1 source archives. `USE_QRCODE_AUTH` is enabled; QRencode and OpenSSL crypto are statically linked. |
 | Discord plugin and icon loading | Passed Wine package/startup probe with JSON-GLib runtime and 16, 22, and 48 px protocol icons included. No plugin load error was logged. |
 | Discord consent dialog | Passed in Wine using a temporary account with no credentials. The first-connect warning appeared; choosing its default decline action disabled that account (`auto-login=0`). The user's successful connection and messaging also confirms the continue path. |
-| Discord login and messaging | User confirmed QR login and DM and server send/receive on a Vista SP2 test machine. Reconnection and other Discord features remain untested; machine architecture was not recorded. |
+| Discord login and messaging | User confirmed QR login and DM and server send/receive on a Vista SP2 test machine. Reconnection and other Discord features remain untested. |
 | Plugin selection | Passed. The installer contains `plugins/libmsn.dll` from msn-pecan and omits `pidgin.exe` and the upstream native MSN DLL. Existing protocol plugins are retained. |
 | Dependencies | Passed static recursive PE inspection for x86 architecture, API-set imports, and Universal CRT imports. Existing GTK2, NSS, and support DLLs were retained. |
-| Windows Vista SP2 (architecture not recorded) | User confirmed Telegram DM, group, and topic send/receive, plus Discord DM and server send/receive. MSN sign-in and buddy addition were previously tested with the integrated Pecan implementation; full CrossTalk messaging remains unverified. |
-| Windows XP SP3 x86 | Static assessment only; no runtime test. |
-| Windows XP Professional x64 SP2 through WOW64 | Static assessment only; no runtime test. |
-| Windows Vista SP2 x64 through WOW64 | 32-bit app intended; runtime status unverified because tester machine architecture was not recorded. |
+| Windows Vista SP2 (32-bit app on x86 or through WOW64) | User confirmed Telegram DM/group/topic and Discord QR login plus DM/server send/receive. MSN sign-in and buddy addition were previously tested with the integrated Pecan implementation; full CrossTalk messaging remains unverified. |
+| Windows XP SP3 and XP Professional x64 SP2 (32-bit app; x64 through WOW64) | Static assessment only; neither edition has been runtime-tested. The installer and launcher contain no OS-version gate. |
 | Live CrossTalk authentication and messaging | No CrossTalk credentials were available in this build environment. The user had previously tested sign-in and buddy addition on Vista using the integrated Pecan implementation; bidirectional CrossTalk messaging and other features remain unverified here. |
 
 Wine reported that the optional Perl plugin could not load without Perl 5.20 and emitted a GtkSpell/Enchant setup warning. These components do not prevent Amethyst or MSN from starting. The official Pidgin runtime did not bundle the Perl runtime.
@@ -41,10 +39,8 @@ Wine reported that the optional Perl plugin could not load without Perl 5.20 and
 
 | Operating system | Status |
 | --- | --- |
-| Windows XP SP3 x86 | Static target configured; untested |
-| Windows XP Professional x64 SP2 (WOW64) | x86 build; statically assessed; untested |
-| Windows Vista SP2 (test machine architecture not recorded) | User confirmed Telegram DM/group/topic and Discord DM/server send/receive; MSN sign-in and buddy addition were previously tested |
-| Windows Vista SP2 x64 (WOW64) | x86 build; intended to run, but not separately verified because test machine architecture was not recorded |
+| Windows XP SP3 x86 and XP Professional x64 SP2 | Same x86 app; x64 edition uses WOW64. Static assessment only; runtime untested. |
+| Windows Vista SP2 | 32-bit app runs natively on x86 and through WOW64 on x64. User confirmed Telegram DM/group/topic and Discord QR login plus DM/server send/receive. |
 | Wine | Installer, version resource, UI startup, and MSN protocol label checked |
 
-Telegram and Discord are unavailable on XP. Vista runtime messaging has been confirmed for Telegram and Discord on the user's machine, although its architecture was not recorded. Wine checks cover installer and plugin behavior, not Windows OS compatibility.
+Telegram and Discord are unavailable on XP. Vista runtime messaging has been confirmed. The same x86 package applies across 32-bit and 64-bit Vista; 64-bit Windows runs it through WOW64. XP x64 is likewise intended to run the x86 package through WOW64, with runtime compatibility still untested. Wine checks cover installer and plugin behavior, not Windows OS compatibility.

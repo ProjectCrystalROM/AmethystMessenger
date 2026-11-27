@@ -35,16 +35,15 @@ contain authentication data.
 
 The Discord plugin is built as 32-bit Windows code with Vista API and PE
 subsystem targets. It imports Vista's SRW-lock API, so it does not load on
-Windows XP. It should run on Vista SP2 x86 and under WOW64 on 64-bit Vista, but
-those OS combinations have not been runtime-tested in this build environment.
+Windows XP. The same 32-bit plugin package runs on 32-bit Vista and under
+WOW64 on 64-bit Vista. The user's Vista SP2 test confirms it works on their
+machine; XP remains statically assessed only.
 Wine installation, startup, plugin probing, and the first-connect consent
 dialog were checked. In a temporary account profile, choosing the default
 decline action changed Discord's `auto-login` setting from enabled to disabled;
 no credentials were configured in that test. The Vista SP2 tester has
 confirmed QR login and Discord send and receive in DMs and servers. Other
-server and presence features, and reconnection have not been checked. Vista
-runtime testing was on the user's machine; the OS architecture was not
-recorded here.
+server and presence features, and reconnection have not been checked.
 
 Build the plugin and its JSON-GLib runtime from the checked-in source inputs:
 

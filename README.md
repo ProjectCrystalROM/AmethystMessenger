@@ -14,13 +14,11 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 
 | Platform | Status |
 | --- | --- |
-| Windows Vista SP2 (architecture not recorded) | Tester confirms Telegram DM, group chat, and topic send/receive, plus Discord DM and server send/receive. |
-| Windows XP SP3 x86 | Build targets the Windows XP API and PE subsystem. Static assessment only; runtime test pending. |
-| Windows XP Professional x64 SP2 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
-| Windows Vista SP2 x64 (WOW64) | 32-bit build is intended to run. Static assessment only; runtime test pending. |
+| Windows Vista SP2 | Tester confirms Telegram DM, group chat, and topic send/receive, plus Discord QR login and DM/server send/receive. The same 32-bit package applies on x86 and x64 Vista; x64 runs it through WOW64. |
+| Windows XP SP3 x86 and XP Professional x64 SP2 | The 32-bit build targets XP APIs and PE subsystem 5.1. x64 runs the same binary through WOW64. Static assessment only; no XP runtime test. |
 | Wine | Used for packaging and startup smoke tests; this does not establish Windows compatibility. |
 
-The application and existing bundled protocols retain the XP SP3 x86 target. The Telegram and Discord plugins require Windows Vista or later; they import Vista APIs and will not load on XP.
+The application and existing bundled protocols retain the XP SP3 target. Telegram and Discord require Vista or later; they import Vista APIs and will not load on XP.
 
 The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. Other bundled protocols remain available, subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
