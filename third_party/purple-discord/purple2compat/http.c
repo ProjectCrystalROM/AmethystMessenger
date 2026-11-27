@@ -29,6 +29,7 @@
 
 #include "internal.h"
 #include "glibcompat.h"
+#include "http-framing.h"
 
 
 #include "debug.h"
@@ -124,6 +125,7 @@ struct _PurpleHttpConnection
 
 	int length_expected;
 	guint length_got, length_got_decompressed;
+	PurpleHttpBodyMode body_mode;
 
 	gboolean is_chunked, in_chunk, chunks_done;
 	int chunk_length, chunk_got;
@@ -1139,8 +1141,17 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 			_purple_http_error(hc, _("Error parsing HTTP"));
 			return FALSE;
 		}
-		if (hc->headers_got)
+		if (hc->headers_got) {
+			purple_debug_info("http",
+				"Response complete: method=%s status=%d mode=%s expected=%d received=%u socket=%s reason=eof\n",
+				hc->request->method, hc->response->code,
+				hc->body_mode == PURPLE_HTTP_BODY_NONE ? "no-body" :
+				hc->body_mode == PURPLE_HTTP_BODY_CHUNKED ? "chunked" :
+				hc->body_mode == PURPLE_HTTP_BODY_CONTENT_LENGTH ? "length" :
+				"close-delimited", hc->length_expected, hc->length_got,
+				hc->socket && hc->socket->use_count > 1 ? "reused" : "new");
 			hc->length_expected = hc->length_got;
+		}
 		else if (hc->length_got == 0 && hc->socket->use_count > 1) {
 			purple_debug_info("http", "Keep-alive connection "
 				"expired (when reading), retrying...\n");
@@ -1173,19 +1184,58 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 		len = 0;
 		if (hc->headers_got) {
 			gboolean is_gzip, is_deflate;
-			if (!purple_http_headers_get_int(hc->response->headers,
-				"Content-Length", &hc->length_expected))
-				hc->length_expected = -1;
-			hc->is_chunked = (purple_http_headers_match(
+			gboolean has_content_length = purple_http_headers_get_int(
+				hc->response->headers, "Content-Length",
+				&hc->length_expected);
+			gboolean is_chunked = purple_http_headers_match(
 				hc->response->headers,
-				"Transfer-Encoding", "chunked"));
+				"Transfer-Encoding", "chunked");
+			hc->body_mode = purple_http_get_body_mode(hc->request->method,
+				hc->response->code, has_content_length, is_chunked);
+			hc->is_chunked = hc->body_mode == PURPLE_HTTP_BODY_CHUNKED;
+			if (hc->body_mode == PURPLE_HTTP_BODY_NONE) {
+				hc->length_expected = 0;
+				hc->is_chunked = FALSE;
+			} else if (hc->body_mode == PURPLE_HTTP_BODY_CHUNKED) {
+				/* Transfer-Encoding overrides Content-Length (RFC 9112 6.3). */
+				hc->length_expected = -1;
+			} else if (hc->body_mode != PURPLE_HTTP_BODY_CONTENT_LENGTH) {
+				hc->length_expected = -1;
+			}
+			const gchar *content_length = purple_http_headers_get(
+				hc->response->headers, "Content-Length");
+			const gchar *transfer_encoding = purple_http_headers_get(
+				hc->response->headers, "Transfer-Encoding");
+			gchar *safe_path = g_strdup(hc->url->path ? hc->url->path : "/");
+			gchar *query = strpbrk(safe_path, "?#");
+			if (query != NULL)
+				*query = '\0';
+			if (strstr(safe_path, "/auth/") != NULL ||
+			    strstr(safe_path, "/remote-auth") != NULL ||
+			    strstr(safe_path, "/webhooks/") != NULL) {
+				g_free(safe_path);
+				safe_path = g_strdup("<auth endpoint>");
+			}
+			purple_debug_info("http",
+				"Response headers: %s %s://%s%s status=%d Content-Length=%s Transfer-Encoding=%s socket=%s mode=%s\n",
+				hc->request->method, hc->url->protocol, hc->url->host,
+				safe_path, hc->response->code,
+				content_length ? content_length : "absent",
+				transfer_encoding ? transfer_encoding : "absent",
+				hc->socket && hc->socket->use_count > 1 ? "reused" : "new",
+				hc->body_mode == PURPLE_HTTP_BODY_NONE ? "no-body" :
+				hc->body_mode == PURPLE_HTTP_BODY_CHUNKED ? "chunked" :
+				hc->body_mode == PURPLE_HTTP_BODY_CONTENT_LENGTH ? "length" :
+				"close-delimited");
+			g_free(safe_path);
 			is_gzip = purple_http_headers_match(
 				hc->response->headers, "Content-Encoding",
 				"gzip");
 			is_deflate = purple_http_headers_match(
 				hc->response->headers, "Content-Encoding",
 				"deflate");
-			if (is_gzip || is_deflate) {
+			if ((is_gzip || is_deflate) &&
+			    hc->body_mode != PURPLE_HTTP_BODY_NONE) {
 				hc->gz_stream = purple_http_gz_new(
 					hc->request->max_length + 1,
 					is_deflate);
@@ -1220,6 +1270,14 @@ static gboolean _purple_http_recv_loopbody(PurpleHttpConnection *hc, gint fd)
 		hc->length_got >= (guint)hc->length_expected)
 	{
 		const gchar *redirect;
+		purple_debug_info("http",
+			"Response complete: method=%s status=%d mode=%s expected=%d received=%u socket=%s reason=framing\n",
+			hc->request->method, hc->response->code,
+			hc->body_mode == PURPLE_HTTP_BODY_NONE ? "no-body" :
+			hc->body_mode == PURPLE_HTTP_BODY_CHUNKED ? "chunked" :
+			hc->body_mode == PURPLE_HTTP_BODY_CONTENT_LENGTH ? "length" :
+			"close-delimited", hc->length_expected, hc->length_got,
+			hc->socket && hc->socket->use_count > 1 ? "reused" : "new");
 
 		if (hc->is_chunked && !hc->chunks_done) {
 			if (len == 0) {
@@ -1547,6 +1605,7 @@ static gboolean _purple_http_reconnect(PurpleHttpConnection *hc)
 	hc->length_got = 0;
 	hc->length_got_decompressed = 0;
 	hc->length_expected = -1;
+	hc->body_mode = PURPLE_HTTP_BODY_CLOSE_DELIMITED;
 	hc->is_chunked = FALSE;
 	hc->in_chunk = FALSE;
 	hc->chunks_done = FALSE;
@@ -1561,8 +1620,20 @@ static gboolean _purple_http_reconnect(PurpleHttpConnection *hc)
 static gboolean purple_http_request_timeout(gpointer _hc)
 {
 	PurpleHttpConnection *hc = _hc;
-
-	purple_debug_warning("http", "Timeout reached for request %p\n", hc);
+	gchar *safe_path = g_strdup(hc->url->path ? hc->url->path : "/");
+	gchar *query = strpbrk(safe_path, "?#");
+	if (query != NULL)
+		*query = '\0';
+	if (strstr(safe_path, "/auth/") != NULL ||
+	    strstr(safe_path, "/remote-auth") != NULL ||
+	    strstr(safe_path, "/webhooks/") != NULL) {
+		g_free(safe_path);
+		safe_path = g_strdup("<auth endpoint>");
+	}
+	purple_debug_warning("http", "Timeout reached: %s %s://%s%s status=%d body-bytes=%u\n",
+		hc->request->method, hc->url->protocol, hc->url->host, safe_path,
+		hc->response->code, hc->length_got);
+	g_free(safe_path);
 
 	purple_http_conn_cancel(hc);
 

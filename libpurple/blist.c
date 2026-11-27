@@ -904,6 +904,7 @@ purple_blist_update_buddy_status(PurpleBuddy *buddy, PurpleStatus *old_status)
 	PurplePresence *presence;
 	PurpleStatus *status;
 	PurpleBlistNode *cnode;
+	gboolean old_status_online;
 
 	g_return_if_fail(buddy != NULL);
 
@@ -913,8 +914,14 @@ purple_blist_update_buddy_status(PurpleBuddy *buddy, PurpleStatus *old_status)
 	purple_debug_info("blist", "Updating buddy status for %s (%s)\n",
 			buddy->name, purple_account_get_protocol_name(buddy->account));
 
+	if (status == NULL) {
+		purple_debug_warning("blist", "Buddy presence has no active status; skipping transition\n");
+		return;
+	}
+	old_status_online = old_status != NULL && purple_status_is_online(old_status);
+
 	if (purple_status_is_online(status) &&
-		!purple_status_is_online(old_status)) {
+		!old_status_online) {
 
 		purple_signal_emit(purple_blist_get_handle(), "buddy-signed-on", buddy);
 
@@ -922,7 +929,7 @@ purple_blist_update_buddy_status(PurpleBuddy *buddy, PurpleStatus *old_status)
 		if (++(PURPLE_CONTACT(cnode)->online) == 1)
 			PURPLE_GROUP(cnode->parent)->online++;
 	} else if (!purple_status_is_online(status) &&
-				purple_status_is_online(old_status)) {
+				old_status_online) {
 
 		purple_blist_node_set_int(&buddy->node, "last_seen", time(NULL));
 		purple_signal_emit(purple_blist_get_handle(), "buddy-signed-off", buddy);
@@ -930,7 +937,7 @@ purple_blist_update_buddy_status(PurpleBuddy *buddy, PurpleStatus *old_status)
 		cnode = buddy->node.parent;
 		if (--(PURPLE_CONTACT(cnode)->online) == 0)
 			PURPLE_GROUP(cnode->parent)->online--;
-	} else {
+	} else if (old_status != NULL) {
 		purple_signal_emit(purple_blist_get_handle(),
 		                 "buddy-status-changed", buddy, old_status,
 		                 status);

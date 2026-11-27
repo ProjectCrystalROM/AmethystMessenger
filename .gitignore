@@ -28,3 +28,7 @@
 /.amethyst-build/
 /.build/
 /output/
+
+# Python test cache
+__pycache__/
+*.py[cod]

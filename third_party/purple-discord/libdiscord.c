@@ -52,6 +52,7 @@
 #include "purple_compat.h"
 
 #include "markdown.h"
+#include "reaction-lookup.h"
 #include "discord_lottie.h"
 
 // Prevent segfault in libpurple ssl plugins
@@ -470,6 +471,7 @@ typedef struct _DiscordImgMsgContext {
 
 typedef struct {
 	guint64 room_id;
+	guint64 message_id;
 	guint64 user_id;
 	guint count;
 	gboolean is_me;
@@ -828,6 +830,24 @@ discord_update_status(DiscordUser *user, JsonObject *json)
 			user->custom_status = NULL;
 		}
 	}
+}
+
+static const gchar *
+discord_libpurple_status_id(const gchar *api_status)
+{
+	if (purple_strequal(api_status, "online"))
+		return "online";
+	if (purple_strequal(api_status, "idle"))
+		return "idle";
+	if (purple_strequal(api_status, "dnd"))
+		return "dnd";
+	if (purple_strequal(api_status, "offline") ||
+	    purple_strequal(api_status, "invisible"))
+		return "offline";
+
+	purple_debug_info("discord", "Mapping unknown Discord presence state '%s' to offline\n",
+		api_status ? api_status : "(missing)");
+	return "offline";
 }
 
 static DiscordChannel *
@@ -1832,7 +1852,11 @@ discord_fetch_url_with_method_len(DiscordAccount *ya, const gchar *method, const
 	purple_http_request_header_set(request, "Cookie", cookies);
 	purple_http_request_header_set(request, "X-Super-Properties", discord_build_x_super_properties_header(ya));
 	purple_http_request_header_set(request, "Origin", "https://" DISCORD_API_SERVER);
+#ifndef DISCORD_DISABLE_HTTP_KEEPALIVE
 	purple_http_request_set_keepalive_pool(request, ya->http_keepalive_pool);
+#else
+	purple_debug_info("discord", "HTTP keep-alive pool disabled for diagnostic build\n");
+#endif
 
 	if (ya->token) {
 		purple_http_request_header_set(request, "Authorization", ya->token);
@@ -2769,6 +2793,64 @@ static gboolean discord_get_room_force_large(DiscordAccount *da, guint64 id);
 static gboolean discord_get_room_force_small(DiscordAccount *da, guint64 id);
 
 static void discord_react_cb(DiscordAccount *da, JsonNode *node, gpointer user_data);
+
+static void
+discord_fetch_reaction_update(DiscordAccount *da, JsonObject *data,
+			      gboolean is_unreact)
+{
+	JsonObject *emoji;
+	JsonNode *emoji_node;
+	const gchar *emoji_name = "?";
+	const gchar *emoji_id = NULL;
+	guint64 channel_id, message_id, user_id;
+	DiscordReaction *reaction;
+	gchar *url;
+
+	if (!discord_reaction_parse_snowflake(data, "channel_id", &channel_id) ||
+	    !discord_reaction_parse_snowflake(data, "message_id", &message_id) ||
+	    !discord_reaction_parse_snowflake(data, "user_id", &user_id) ||
+	    message_id == 0 || channel_id == 0 || user_id == 0) {
+		purple_debug_info("discord", "Ignoring malformed reaction event identifiers\n");
+		return;
+	}
+	emoji_node = json_object_get_member(data, "emoji");
+	if (emoji_node == NULL || !JSON_NODE_HOLDS_OBJECT(emoji_node)) {
+		purple_debug_info("discord", "Ignoring reaction event without an emoji object\n");
+		return;
+	}
+	emoji = json_node_get_object(emoji_node);
+	if (json_object_has_member(emoji, "name")) {
+		JsonNode *name_node = json_object_get_member(emoji, "name");
+		if (name_node != NULL && JSON_NODE_HOLDS_VALUE(name_node) &&
+		    json_node_get_value_type(name_node) == G_TYPE_STRING &&
+		    json_node_get_string(name_node) != NULL)
+			emoji_name = json_node_get_string(name_node);
+	}
+	if (json_object_has_member(emoji, "id")) {
+		JsonNode *id_node = json_object_get_member(emoji, "id");
+		if (id_node != NULL && JSON_NODE_HOLDS_VALUE(id_node) &&
+		    json_node_get_value_type(id_node) == G_TYPE_STRING)
+			emoji_id = json_node_get_string(id_node);
+	}
+
+	reaction = g_new0(DiscordReaction, 1);
+	reaction->room_id = channel_id;
+	reaction->message_id = message_id;
+	reaction->user_id = user_id;
+	reaction->msg_time = discord_time_from_snowflake(message_id);
+	reaction->is_me = user_id == da->self_user_id;
+	reaction->count = 1;
+	reaction->reaction = (emoji_id != NULL) ?
+		g_strdup_printf("&lt;:%s:%s&gt;", emoji_name, emoji_id) :
+		g_strdup(emoji_name);
+	reaction->is_unreact = is_unreact;
+
+	url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION
+		"/channels/%" G_GUINT64_FORMAT "/messages?limit=5&after=%" G_GUINT64_FORMAT,
+		channel_id, message_id - 1);
+	discord_fetch_url(da, url, NULL, discord_react_cb, reaction);
+	g_free(url);
+}
 
 static gchar *
 discord_truncate_message(const gchar *msg_text, guint trunc_len)
@@ -4482,7 +4564,7 @@ discord_process_dispatch(DiscordAccount *da, const gchar *type, JsonObject *data
 
 		} else if (username) {
 			const gchar *status = json_object_get_string_member(data, "status");
-			purple_protocol_got_user_status(da->account, username, status, "message", user->game ? user->game : user->custom_status, NULL);
+			purple_protocol_got_user_status(da->account, username, discord_libpurple_status_id(status), "message", user->game ? user->game : user->custom_status, NULL);
 			purple_protocol_got_user_idle(da->account, username, idle_since ? TRUE : FALSE, 0);
 
 			// Check avatar updates
@@ -4536,7 +4618,7 @@ discord_process_dispatch(DiscordAccount *da, const gchar *type, JsonObject *data
 				}
 
 				// Change status to the new user
-				purple_protocol_got_user_status(da->account, new_username_full, status, "message", user->game ? user->game : user->custom_status, NULL);
+				purple_protocol_got_user_status(da->account, new_username_full, discord_libpurple_status_id(status), "message", user->game ? user->game : user->custom_status, NULL);
 				purple_protocol_got_user_idle(da->account, new_username_full, idle_since ? TRUE : FALSE, 0);
 				purple_protocol_got_user_status(da->account, username, "offline", NULL);
 
@@ -5323,63 +5405,9 @@ discord_process_dispatch(DiscordAccount *da, const gchar *type, JsonObject *data
 		}
 
 	} else if (purple_strequal(type, "MESSAGE_REACTION_ADD") && purple_account_get_bool(da->account, "show-reactions", TRUE)) {
-
-		const gchar *channel_id_s = json_object_get_string_member(data, "channel_id");
-		guint64 channel_id = to_int(channel_id_s);
-		guint64 message_id = to_int(json_object_get_string_member(data, "message_id"));
-		guint64 user_id = to_int(json_object_get_string_member(data, "user_id"));
-		JsonObject *emoji = json_object_get_object_member(data, "emoji");
-		const gchar *emoji_name = json_object_get_string_member(emoji, "name");
-		const gchar *emoji_id = json_object_get_string_member(emoji, "id");
-		if (emoji_name == NULL) {
-			emoji_name = "?";
-		}
-
-		DiscordReaction *reaction;
-		reaction = g_new0(DiscordReaction, 1);
-		reaction->room_id = channel_id;
-		reaction->user_id = user_id;
-		reaction->msg_time = discord_time_from_snowflake(message_id);
-		reaction->msg_txt = NULL;
-		reaction->is_me = user_id == da->self_user_id ? TRUE : FALSE;
-		reaction->count = 1;
-		reaction->reaction = (emoji_id != NULL) ? g_strdup_printf("&lt;:%s:%s&gt;", emoji_name, emoji_id) : g_strdup(emoji_name);
-		reaction->is_unreact = FALSE;
-
-		// Get array of messages because single-message endpoint is bot-only
-		gchar *url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/channels/%" G_GUINT64_FORMAT "/messages?limit=5&after=%" G_GUINT64_FORMAT, channel_id, message_id-1);
-		discord_fetch_url(da, url, NULL, discord_react_cb, reaction);
-		g_free(url);
-
-
+		discord_fetch_reaction_update(da, data, FALSE);
 	} else if (purple_strequal(type, "MESSAGE_REACTION_REMOVE") && purple_account_get_bool(da->account, "show-reactions", TRUE)) {
-
-		const gchar *channel_id_s = json_object_get_string_member(data, "channel_id");
-		guint64 channel_id = to_int(channel_id_s);
-		guint64 message_id = to_int(json_object_get_string_member(data, "message_id"));
-		guint64 user_id = to_int(json_object_get_string_member(data, "user_id"));
-		JsonObject *emoji = json_object_get_object_member(data, "emoji");
-		const gchar *emoji_name = json_object_get_string_member(emoji, "name");
-		const gchar *emoji_id = json_object_get_string_member(emoji, "id");
-		if (emoji_name == NULL) {
-			emoji_name = "?";
-		}
-
-		DiscordReaction *reaction;
-		reaction = g_new0(DiscordReaction, 1);
-		reaction->room_id = channel_id;
-		reaction->user_id = user_id;
-		reaction->msg_time = discord_time_from_snowflake(message_id);
-		reaction->msg_txt = NULL;
-		reaction->is_me = user_id == da->self_user_id ? TRUE : FALSE;
-		reaction->count = 1;
-		reaction->reaction = (emoji_id != NULL) ? g_strdup_printf("&lt;:%s:%s&gt;", emoji_name, emoji_id) : g_strdup(emoji_name);
-		reaction->is_unreact = TRUE;
-
-		// Get array of messages because single-message endpoint is bot-only
-		gchar *url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/channels/%" G_GUINT64_FORMAT "/messages?limit=5&after=%" G_GUINT64_FORMAT, channel_id, message_id-1);
-		discord_fetch_url(da, url, NULL, discord_react_cb, reaction);
-		g_free(url);
+		discord_fetch_reaction_update(da, data, TRUE);
 
 	} else {
 		purple_debug_info("discord", "Unhandled message type '%s'\n", type);
@@ -5961,7 +5989,7 @@ discord_got_presences(DiscordAccount *da, JsonNode *node, gpointer user_data)
 			game_name = json_object_get_string_member(game, "state");
 		}
 
-		purple_protocol_got_user_status(da->account, merged_username, status, "message", game_name, NULL);
+		purple_protocol_got_user_status(da->account, merged_username, discord_libpurple_status_id(status), "message", game_name, NULL);
 		purple_protocol_got_user_idle(da->account, merged_username, purple_strequal(status, "idle"), 0);
 
 		g_free(merged_username);
@@ -7843,57 +7871,89 @@ discord_thread_parent_cb(DiscordAccount *da, JsonNode *node, gpointer user_data)
 static void
 discord_send_react_cb(DiscordAccount *da, JsonNode *node, gpointer user_data)
 {
-	JsonArray *messages = json_node_get_array(node);
-	guint len = json_array_get_length(messages);
-	JsonObject *message = json_array_get_object_element(messages, len-1);
-	const gchar *channel_id = json_object_get_string_member(message, "channel_id");
-	const gchar *msg_id = json_object_get_string_member(message, "id");
-	time_t msg_time = discord_time_from_snowflake(to_int(msg_id));
-
 	DiscordReaction *react  = (DiscordReaction *)user_data;
-	gchar *emoji = react->reaction;
-	time_t intended_time = react->msg_time;
-	const gchar *method = react->is_unreact ? "DELETE" : "PUT";
+	JsonObject *message;
+	guint64 message_id;
+	guint64 channel_id;
+	gchar *msg_id;
+	gchar *channel_id_s;
+	const gchar *encoded_emoji;
+	gchar *url;
+	const gchar *method;
 
-	if (msg_time != intended_time) {
+	if (react == NULL)
+		return;
+	message = discord_reaction_find_message_at_time(node, react->msg_time);
+	if (message == NULL ||
+	    !discord_reaction_parse_snowflake(message, "id", &message_id) ||
+	    !discord_reaction_parse_snowflake(message, "channel_id", &channel_id) ||
+	    channel_id != react->room_id) {
+		purple_debug_info("discord", "Ignoring reaction lookup without the intended message\n");
 		discord_free_reaction(react);
 		return;
 	}
 
-
-	gchar *url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/channels/%s/messages/%s/reactions/%s/%%40me", channel_id, msg_id, purple_url_encode(emoji));
+	msg_id = from_int(message_id);
+	channel_id_s = from_int(channel_id);
+	encoded_emoji = purple_url_encode(react->reaction);
+	method = react->is_unreact ? "DELETE" : "PUT";
+	url = g_strdup_printf("https://" DISCORD_API_SERVER "/api/" DISCORD_API_VERSION "/channels/%s/messages/%s/reactions/%s/%%40me", channel_id_s, msg_id, encoded_emoji);
 	discord_fetch_url_with_method(da, method, url, "{}", NULL, NULL);
 	g_free(url);
+	g_free(msg_id);
+	g_free(channel_id_s);
 	discord_free_reaction(react);
 }
 
 static void
 discord_react_cb(DiscordAccount *da, JsonNode *node, gpointer user_data)
 {
-	JsonArray *data_items = json_node_get_array(node);
-	guint len = json_array_get_length(data_items);
-	JsonObject *data = json_array_get_object_element(data_items, len-1);
 	DiscordReaction *react = user_data;
-	guint64 reactor_id = react->user_id;
+	JsonObject *data;
+	JsonObject *author_obj;
+	JsonNode *author_node;
+	guint64 author_id;
+	guint64 channel_id;
+	const gchar *channel_id_s;
 
-	if (node == NULL) {
+	if (react == NULL)
+		return;
+	data = discord_reaction_find_message(node, react->message_id);
+	author_node = data != NULL ? json_object_get_member(data, "author") : NULL;
+	if (data == NULL || author_node == NULL ||
+	    !JSON_NODE_HOLDS_OBJECT(author_node) ||
+	    (author_obj = json_node_get_object(author_node)) == NULL ||
+	    !discord_reaction_parse_snowflake(author_obj, "id", &author_id)) {
+		purple_debug_info("discord", "Ignoring reaction response without the target message and author\n");
 		discord_free_reaction(react);
 		return;
 	}
+	if (!discord_reaction_parse_snowflake(data, "channel_id", &channel_id) ||
+	    channel_id != react->room_id) {
+		purple_debug_info("discord", "Ignoring reaction response with an invalid channel id\n");
+		discord_free_reaction(react);
+		return;
+	}
+	channel_id_s = json_object_get_string_member(data, "channel_id");
 
-	const gchar *channel_id_s = json_object_get_string_member(data, "channel_id");
-	JsonObject *author_obj = json_object_get_object_member(data, "author");
-	guint64 author_id = to_int(json_object_get_string_member(author_obj, "id"));
-
-	react->msg_txt = g_strdup(json_object_get_string_member(data, "content"));
-	const gchar *msg_id = json_object_get_string_member(data, "id");
-	react->msg_time = discord_time_from_snowflake(to_int(msg_id));
+	PurpleConversation *conv = discord_get_conv_from_channel_id(da, react->room_id);
+	if (conv == NULL) {
+		purple_debug_info("discord", "Dropping reaction update for a closed conversation\n");
+		discord_free_reaction(react);
+		return;
+	}
+	if (json_object_has_member(data, "content")) {
+		JsonNode *content = json_object_get_member(data, "content");
+		if (content != NULL && JSON_NODE_HOLDS_VALUE(content) &&
+		    json_node_get_value_type(content) == G_TYPE_STRING)
+			react->msg_txt = g_strdup(json_node_get_string(content));
+	}
 
 	DiscordGuild *guild = NULL;
 	DiscordChannel *channel = discord_get_channel_global_int_guild(da, to_int(channel_id_s), &guild);
-	DiscordUser *reactor = discord_get_user(da, reactor_id);
+	DiscordUser *reactor = discord_get_user(da, react->user_id);
 
-	gchar *reactor_nick = reactor_id == da->self_user_id ? g_strdup(_("You")) : discord_get_display_name_or_unk(da, guild, channel, reactor, NULL);
+	gchar *reactor_nick = react->user_id == da->self_user_id ? g_strdup(_("You")) : discord_get_display_name_or_unk(da, guild, channel, reactor, NULL);
 
 	gchar *author_nick;
 	if (author_id == da->self_user_id) {
@@ -7902,8 +7962,6 @@ discord_react_cb(DiscordAccount *da, JsonNode *node, gpointer user_data)
 		DiscordUser *author = discord_get_user(da, author_id);
 		author_nick = discord_get_display_name_or_unk(da, guild, channel, author, author_obj);
 	}
-
-	PurpleConversation *conv = discord_get_conv_from_channel_id(da, to_int(channel_id_s));
 
 	gchar *react_text = discord_get_react_text(da, author_nick, reactor_nick, react);
 	g_free(author_nick);

@@ -106,6 +106,9 @@ discord="$root/third_party/purple-discord"
 version="0.9.2026.11.27.amethyst.$(git -C "$root" rev-parse --short HEAD)-$flavor"
 defines=(-D_WIN32_WINNT="$winver" -DWINVER="$winver"
     -DDISCORD_PLUGIN_VERSION='"'"$version"'"' -DMARKDOWN_PIDGIN)
+if [[ "${AMETHYST_DISCORD_DISABLE_KEEPALIVE:-0}" == 1 ]]; then
+    defines+=(-DDISCORD_DISABLE_HTTP_KEEPALIVE)
+fi
 includes=(-I"$root/libpurple" -I"$root/libpurple/win32" -I"$root"
     -I"$discord/purple2compat"
     -I"$glib/include/glib-2.0" -I"$glib/lib/glib-2.0/include" -I"$gtk/include"
@@ -128,6 +131,7 @@ fi
     -Wl,--enable-auto-image-base,--enable-auto-import \
     -o "$output/libdiscord.dll" \
     "$discord/libdiscord.c" "$discord/markdown.c" "$discord/discord_lottie.c" \
+    "$discord/reaction-lookup.c" \
     "$discord"/purple2compat/*.c \
     -lpurple "${link_flags[@]}" \
     -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic -lz -lws2_32 -lgdi32 -lcrypt32

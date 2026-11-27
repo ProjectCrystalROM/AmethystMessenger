@@ -123,7 +123,7 @@ endif
 
 CFLAGS += -DLOCALEDIR=\"$(LOCALEDIR)\"
 
-C_FILES := markdown.c discord_lottie.c
+C_FILES := markdown.c discord_lottie.c reaction-lookup.c
 PURPLE_COMPAT_FILES := purple2compat/*.c
 PURPLE_C_FILES := libdiscord.c $(C_FILES)
 
