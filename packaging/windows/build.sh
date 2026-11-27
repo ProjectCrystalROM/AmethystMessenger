@@ -70,6 +70,17 @@ done
 install_pe() {
     SOURCE_DATE_EPOCH=0 i686-w64-mingw32-strip --strip-unneeded -o "$payload/$2" "$1"
 }
+objdump=${AMETHYST_MINGW_OBJDUMP:-i686-w64-mingw32-objdump}
+for dll in "$discord_dll" "$json_glib_dll"; do
+    imports=$("$objdump" -p "$dll")
+    if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx' <<<"$imports"; then
+        echo "Vista-only imports remain in Discord dependency $dll" >&2
+        exit 1
+    fi
+done
+discord_subsystem=$("$objdump" -p "$discord_dll" | awk '/MajorSubsystemVersion/{print $2; exit}')
+discord_minor=$("$objdump" -p "$discord_dll" | awk '/MinorSubsystemVersion/{print $2; exit}')
+test "$discord_subsystem" = 5 && test "$discord_minor" = 1
 install_pe pidgin/amethyst.exe amethyst.exe
 install_pe pidgin/pidgin.dll pidgin.dll
 install_pe libpurple/libpurple.dll libpurple.dll

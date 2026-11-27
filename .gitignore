@@ -26,4 +26,5 @@
 /pidgin-2.11.0-win32bin/
 /pidgin-2.11.0-dbgsym/
 /.amethyst-build/
+/.build/
 /output/

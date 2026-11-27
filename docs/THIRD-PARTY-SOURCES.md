@@ -24,7 +24,9 @@ scripts; see [TELEGRAM-WINDOWS.md](TELEGRAM-WINDOWS.md).
 The repository includes the GPL-3.0-or-later purple-discord source at
 `third_party/purple-discord/`, based on upstream commit
 `2b85bbfad5e915f60f2c4ca30c1e7d720762c148`. QR login is enabled with the
-plugin's OpenSSL crypto backend. JSON-GLib 0.14.2 and libqrencode 4.1.1 source
+plugin's OpenSSL crypto backend. That backend is built from the same pinned
+OpenSSL 3.0.0 source listed above, with XP target macros selecting OpenSSL's
+existing critical-section implementation. JSON-GLib 0.14.2 and libqrencode 4.1.1 source
 archives are checked in under `third_party/sources/`; their hashes are in
 `SHA256SUMS-discord`. Their LGPL-2.1 license texts and source archives are
 included in the installer. See [DISCORD-WINDOWS.md](DISCORD-WINDOWS.md).

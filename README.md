@@ -6,7 +6,7 @@
 
 Amethyst Messenger is an independently maintained multiprotocol instant messaging client derived from Pidgin 2.11.0. The project preserves the classic desktop messaging experience on historical operating systems and restores access to networks left behind by their original operators.
 
-The Windows installer ships five protocols: AIM, MSN, XMPP, Discord, and Telegram. MSN uses msn-pecan configured for CrossTalk and appears as **MSN** in account setup. Discord and Telegram use their bundled plugins and require Vista or later; see their platform notes below. Other Pidgin protocol implementations remain in the source tree but are omitted from the installer. The project values historical compatibility, lightweight software, user choice, and preservation.
+The Windows installer ships five protocols: AIM, MSN, XMPP, Discord, and Telegram. MSN uses msn-pecan configured for CrossTalk and appears as **MSN** in account setup. Discord is now built for the XP API baseline; Telegram still requires Vista or later. See their platform notes below. Other Pidgin protocol implementations remain in the source tree but are omitted from the installer. The project values historical compatibility, lightweight software, user choice, and preservation.
 
 Amethyst Messenger is independent and is not affiliated with the original Pidgin developers, Microsoft, the msn-pecan developers, or the CrossTalk operators. Its source preserves upstream copyright notices and licensing terms.
 
@@ -18,7 +18,7 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 | Windows XP SP3 x86 and XP Professional x64 SP2 | The 32-bit build targets XP APIs and PE subsystem 5.1. x64 runs the same binary through WOW64. Static assessment only; no XP runtime test. |
 | Wine | Used for packaging and startup smoke tests; this does not establish Windows compatibility. |
 
-The application and existing bundled protocols retain the XP SP3 target. Telegram and Discord require Vista or later; they import Vista APIs and will not load on XP.
+The application and existing bundled protocols retain the XP SP3 target. Discord targets XP; Telegram still imports Vista APIs and will not load on XP.
 
 The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. The included protocols remain subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
@@ -44,7 +44,7 @@ The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupial
 
 ## Discord
 
-The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. The Vista tester confirmed QR login and DM and server send and receive. Other Discord features remain unverified.
+The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin now targets XP APIs, but Windows XP runtime loading and login have not yet been verified. Vista QR login and DM and server messaging were confirmed on the earlier build. Other Discord features remain unverified.
 
 ## Source, attribution, and contributions
 

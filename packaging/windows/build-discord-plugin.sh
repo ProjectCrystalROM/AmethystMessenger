@@ -5,7 +5,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 extra=${AMETHYST_WINDOWS_EXTRA:-$(cd "$root/../.amethyst-build/windows-extra" && pwd)}
 gtk=${AMETHYST_GTK_SDK:-$extra/gtk-sdk}
 glib=${AMETHYST_GLIB_SDK:-$extra/glib-sdk}
-openssl=${AMETHYST_OPENSSL_PREFIX:-$extra/openssl-install}
+openssl=${AMETHYST_OPENSSL_PREFIX:-$extra/openssl-xp-install}
 zlib=${AMETHYST_ZLIB_PREFIX:-$extra/usr/i686-w64-mingw32}
 build=${AMETHYST_DISCORD_BUILD_DIR:-$root/.build/discord-win32}
 output=${AMETHYST_DISCORD_OUTPUT_DIR:-$root/output/discord-plugin}
@@ -17,7 +17,8 @@ for path in "$gtk" "$glib" "$openssl" "$zlib"; do
         exit 2
     fi
 done
-for tool in "$cc" cmake pkg-config; do
+objdump=${AMETHYST_MINGW_OBJDUMP:-i686-w64-mingw32-objdump}
+for tool in "$cc" "$objdump" cmake pkg-config; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 2; }
 done
 
@@ -43,7 +44,7 @@ export PKG_CONFIG_PATH="$glib/lib/pkgconfig"
 if [[ ! -f "$json_build/Makefile" ]]; then
     (cd "$json_build" && \
         PKG_CONFIG="$build/pkg-config-glib" \
-        CC="$cc" CFLAGS='-O2 -D_WIN32_WINNT=0x0600 -DWINVER=0x0600' \
+        CC="$cc" CFLAGS='-O2 -D_WIN32_WINNT=0x0501 -DWINVER=0x0501' \
         CPPFLAGS="-I$gtk/include" \
         LDFLAGS="-L$glib/lib -L$gtk/lib" \
         "$json_src/configure" --host=i686-w64-mingw32 --build=x86_64-pc-linux-gnu \
@@ -72,10 +73,10 @@ cmake --build "$qr_build" --parallel "${JOBS:-4}"
 cmake --install "$qr_build"
 
 discord="$root/third_party/purple-discord"
-version=0.9.2026.11.26.amethyst.2b85bbf
+version=0.9.2026.11.26.amethyst.2b85bbf-xp
 "$cc" -O2 -std=c99 -Wall -Wextra -Wno-deprecated-declarations \
     -Wno-unused-parameter -fno-strict-aliasing -Wformat -static-libgcc -shared \
-    -D_WIN32_WINNT=0x0600 -DWINVER=0x0600 \
+    -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 \
     -DDISCORD_PLUGIN_VERSION='"'"$version"'"' -DMARKDOWN_PIDGIN \
     -DUSE_QRCODE_AUTH -DUSE_OPENSSL_CRYPTO \
     -I"$root/libpurple" -I"$root/libpurple/win32" -I"$root" \
@@ -85,7 +86,7 @@ version=0.9.2026.11.26.amethyst.2b85bbf
     -I"$qr_prefix/include" -I"$zlib/include" \
     -L"$root/libpurple" -L"$glib/lib" -L"$json_prefix/lib" \
     -L"$qr_prefix/lib" -L"$openssl/lib" -L"$gtk/lib" -L"$zlib/lib" \
-    -Wl,--major-subsystem-version,6,--minor-subsystem-version,0 \
+    -Wl,--major-subsystem-version,5,--minor-subsystem-version,1 \
     -Wl,--enable-auto-image-base,--enable-auto-import \
     -o "$output/libdiscord.dll" \
     "$discord/libdiscord.c" "$discord/markdown.c" "$discord/discord_lottie.c" \
@@ -97,4 +98,14 @@ version=0.9.2026.11.26.amethyst.2b85bbf
 install -m 644 "$json_prefix/bin/libjson-glib-1.0-0.dll" "$output/"
 "${cc%gcc*}strip" --strip-unneeded "$output/libdiscord.dll" "$output/libjson-glib-1.0-0.dll"
 sha256sum "$output/libdiscord.dll" "$output/libjson-glib-1.0-0.dll" > "$output/SHA256SUMS"
+for dll in "$output/libdiscord.dll" "$output/libjson-glib-1.0-0.dll"; do
+    imports=$("$objdump" -p "$dll")
+    if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx' <<<"$imports"; then
+        echo "Vista-only imports remain in $dll" >&2
+        exit 1
+    fi
+done
+discord_subsystem=$("$objdump" -p "$output/libdiscord.dll" | awk '/MajorSubsystemVersion/{print $2; exit}')
+discord_minor=$("$objdump" -p "$output/libdiscord.dll" | awk '/MinorSubsystemVersion/{print $2; exit}')
+test "$discord_subsystem" = 5 && test "$discord_minor" = 1
 echo "Discord plugin and JSON-GLib runtime built in $output"

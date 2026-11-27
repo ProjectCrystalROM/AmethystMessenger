@@ -12,7 +12,7 @@ The build script expects these files in an input directory. Obtain the original 
 - `libxml2-sdk.tar.gz`, libxml2 2.9.2 Windows SDK.
 - `gtkspell-sdk.tar.bz2`, GtkSpell 2.0.16 Windows SDK.
 
-Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3, Python 3, `unzip`, and `tar`. The upstream generated Windows makefiles are retained. Build with:
+Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3, Python 3, `unzip`, and `tar`. The upstream generated Windows makefiles are retained. Build XP-targeted OpenSSL for Discord with [the OpenSSL recipe](DISCORD-WINDOWS.md), then build the protocol plugins and installer:
 
 ```sh
 AMETHYST_TELEGRAM_DLL=/path/to/telegram-plugin-output/libtelegram-tdlib.dll \
@@ -29,7 +29,7 @@ The build regenerates the Windows `config.h` from the checked-in MinGW template 
 
 ## Runtime checks and status
 
-A Wine startup smoke test can check installer operation, executable launch, resource metadata, and protocol registration. Wine is not a Windows XP or Vista test. The branded package has been used on Vista SP2; the tester confirmed Telegram DM/group/topic send and receive, Discord QR login and DM/server send and receive, and earlier MSN sign-in and buddy addition. XP remains statically assessed pending a machine or VM test.
+A Wine startup smoke test can check installer operation, executable launch, resource metadata, and protocol registration. The XP-targeted Discord plugin passed PE import and subsystem checks and was probed without a loader error in a fresh Wine prefix configured as Windows XP x64. Wine is not a Windows XP test; actual XP x64 account-list, login, and messaging checks remain pending before claiming XP runtime support. The earlier Vista build was used on Vista SP2; the tester confirmed Telegram DM/group/topic send and receive, Discord QR login and DM/server send and receive, and earlier MSN sign-in and buddy addition. XP remains pending runtime validation.
 
 To test MSN, create a new **MSN** account using CrossTalk credentials. The client writes its separate profile to `%APPDATA%\Amethyst Messenger`. Do not put credentials or session logs in the repository. Redact them from diagnostic output.
 

@@ -33,11 +33,14 @@ contain authentication data.
 
 ## Windows compatibility and validation
 
-The Discord plugin is built as 32-bit Windows code with Vista API and PE
-subsystem targets. It imports Vista's SRW-lock API, so it does not load on
-Windows XP. The same 32-bit plugin package runs on 32-bit Vista and under
-WOW64 on 64-bit Vista. The user's Vista SP2 test confirms it works on their
-machine; XP remains statically assessed only.
+The Discord plugin is built as 32-bit Windows code with XP API macros and PE
+subsystem version 5.1. Its statically linked OpenSSL 3.0.0 is also built for
+XP, selecting OpenSSL's existing `CRITICAL_SECTION` lock backend instead of
+Vista's SRW locks. Static inspection found no Vista-only imports in the plugin
+or JSON-GLib DLL. The same x86 plugin is intended to run natively on XP x86 and
+under WOW64 on XP x64. Wine XP-mode loading and protocol registration are being
+checked; actual Windows XP x64 login and messaging still need confirmation.
+Vista SP2 login and DM/server messaging were previously confirmed by the user.
 Wine installation, startup, plugin probing, and the first-connect consent
 dialog were checked. In a temporary account profile, choosing the default
 decline action changed Discord's `auto-login` setting from enabled to disabled;
@@ -45,14 +48,22 @@ no credentials were configured in that test. The Vista SP2 tester has
 confirmed QR login and Discord send and receive in DMs and servers. Other
 server and presence features, and reconnection have not been checked.
 
-Build the plugin and its JSON-GLib runtime from the checked-in source inputs:
+Build XP-targeted OpenSSL 3.0.0 from the pinned source used by the Telegram
+source bundle, then build the plugin and its JSON-GLib runtime from the checked-
+in source inputs:
 
 ```sh
+AMETHYST_OPENSSL_SOURCE_DIR=/path/to/openssl-3.0.0 \
+  packaging/windows/build-openssl-xp.sh
 packaging/windows/build-discord-plugin.sh
 ```
 
-The script requires the historical GTK2 and GLib SDKs, MinGW-w64 i686 Win32
-toolchain, and the existing Amethyst OpenSSL and zlib prefixes. It verifies
+The OpenSSL recipe outputs to `../.amethyst-build/windows-extra/openssl-xp-install`
+by default. The Discord build uses that prefix and emits an XP-targeted DLL;
+`AMETHYST_OPENSSL_PREFIX` can select another XP-targeted prefix. The scripts
+require the historical GTK2 and GLib SDKs, MinGW-w64 i686 Win32 toolchain, and
+zlib prefix. The OpenSSL build requires the exact 3.0.0 source archive named in
+`THIRD-PARTY-SOURCES.md`. It verifies
 the SHA-256 checksums for JSON-GLib 0.14.2 and libqrencode 4.1.1 source
 archives, then builds those dependencies locally. It writes `libdiscord.dll`
 and `libjson-glib-1.0-0.dll` under `output/discord-plugin/`. The OpenSSL crypto
