@@ -40,8 +40,8 @@ those OS combinations have not been runtime-tested in this build environment.
 Wine installation, startup, plugin probing, and the first-connect consent
 dialog were checked. In a temporary account profile, choosing the default
 decline action changed Discord's `auto-login` setting from enabled to disabled;
-no credentials were configured in that test. The Vista SP2 tester has since
-confirmed Discord send and receive in DMs and servers. QR approval, other
+no credentials were configured in that test. The Vista SP2 tester has
+confirmed QR login and Discord send and receive in DMs and servers. Other
 server and presence features, and reconnection have not been checked. Vista
 runtime testing was on the user's machine; the OS architecture was not
 recorded here.
