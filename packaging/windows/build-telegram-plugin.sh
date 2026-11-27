@@ -2,6 +2,29 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
+target=${AMETHYST_TELEGRAM_TARGET:-vista}
+case "$target" in
+    xp)
+        windows_version=0x0501
+        ntddi_version=0x05010300
+        subsystem_major=5
+        subsystem_minor=1
+        winpthread=${AMETHYST_WINPTHREAD_STATIC:-/usr/i686-w64-mingw32/lib/libwinpthread.a}
+        if [[ ! -f "$winpthread" ]]; then
+            echo "Set AMETHYST_WINPTHREAD_STATIC to the MinGW static winpthread archive." >&2
+            exit 2
+        fi
+        winpthread_link="-Wl,--whole-archive,$winpthread,--no-whole-archive"
+        ;;
+    vista)
+        windows_version=0x0600
+        ntddi_version=0x06000000
+        subsystem_major=6
+        subsystem_minor=0
+        winpthread_link=
+        ;;
+    *) echo "AMETHYST_TELEGRAM_TARGET must be 'xp' or 'vista'" >&2; exit 2 ;;
+esac
 required=(AMETHYST_MINGW_CXX AMETHYST_TDLIB_DIR AMETHYST_TDLIB_SOURCE AMETHYST_TDLIB_BUILD
           AMETHYST_OPENSSL_PREFIX AMETHYST_FMT_PREFIX AMETHYST_ZLIB_PREFIX
           AMETHYST_GTK_SDK AMETHYST_GLIB_SDK AMETHYST_TELEGRAM_BUILD_DIR AMETHYST_TELEGRAM_OUTPUT_DIR)
@@ -16,8 +39,8 @@ cmake -S "$root/third_party/tdlib-purple" -B "$AMETHYST_TELEGRAM_BUILD_DIR" \
     -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=i686 \
     -DCMAKE_CXX_COMPILER="$AMETHYST_MINGW_CXX" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=0x0600 -DWINVER=0x0600 -DG_SOURCE_REMOVE=FALSE -DG_SOURCE_CONTINUE=TRUE -I$AMETHYST_OPENSSL_PREFIX/include -I$AMETHYST_TDLIB_SOURCE/tdutils -I$AMETHYST_TDLIB_BUILD/tdutils" \
-    -DCMAKE_SHARED_LINKER_FLAGS='-static-libgcc -static-libstdc++ -Wl,--major-subsystem-version,6,--minor-subsystem-version,0' \
+    -DCMAKE_CXX_FLAGS="-D_WIN32_WINNT=$windows_version -DWINVER=$windows_version -DNTDDI_VERSION=$ntddi_version -DG_SOURCE_REMOVE=FALSE -DG_SOURCE_CONTINUE=TRUE -I$AMETHYST_OPENSSL_PREFIX/include -I$AMETHYST_TDLIB_SOURCE/tdutils -I$AMETHYST_TDLIB_BUILD/tdutils" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-static-libgcc -static-libstdc++ $winpthread_link -Wl,--subsystem,windows,--major-subsystem-version,$subsystem_major,--minor-subsystem-version,$subsystem_minor" \
     -DTd_DIR="$AMETHYST_TDLIB_DIR" \
     -DNoPkgConfig=True -DNoPidgin=False -DNoVoip=True -DNoLottie=True -DNoTranslations=True \
     -Dfmt_INCLUDE_DIRS="$AMETHYST_FMT_PREFIX/include" \
@@ -37,3 +60,14 @@ mkdir -p "$AMETHYST_TELEGRAM_OUTPUT_DIR"
 SOURCE_DATE_EPOCH=0 i686-w64-mingw32-strip --strip-unneeded \
     -o "$AMETHYST_TELEGRAM_OUTPUT_DIR/libtelegram-tdlib.dll" \
     "$AMETHYST_TELEGRAM_BUILD_DIR/libtelegram-tdlib.dll"
+
+objdump=${AMETHYST_MINGW_OBJDUMP:-i686-w64-mingw32-objdump}
+metadata=$("$objdump" -p "$AMETHYST_TELEGRAM_OUTPUT_DIR/libtelegram-tdlib.dll")
+major=$(awk '/MajorSubsystemVersion/{print $2; exit}' <<<"$metadata")
+minor=$(awk '/MinorSubsystemVersion/{print $2; exit}' <<<"$metadata")
+test "$major" = "$subsystem_major" && test "$minor" = "$subsystem_minor"
+if [[ "$target" == xp ]] && grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx|IdnToAscii|WSASendMsg' <<<"$metadata"; then
+    echo "Vista-only imports remain in XP Telegram plugin" >&2
+    exit 1
+fi
+echo "Telegram plugin built for $target (PE subsystem $major.$minor) in $AMETHYST_TELEGRAM_OUTPUT_DIR"

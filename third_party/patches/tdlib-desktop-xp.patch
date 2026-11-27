@@ -1,0 +1,388 @@
+From: Amethyst Messenger maintainers
+Subject: [PATCH] Add XP-compatible desktop Windows fallbacks to TDLib
+
+Keep the Vista path unchanged. For XP-targeted desktop builds, use critical
+sections for shared mutex operations, legacy file and IPv4/IPv6 address APIs,
+a GetTickCount wrap extender, and WSASendTo where TDLib sends no ancillary
+message control data. Make the Windows API target configurable while retaining
+TDLib's existing default.
+
+Apply after tdlib-desktop-vista.patch.
+
+diff --git a/CMake/TdSetUpCompiler.cmake b/CMake/TdSetUpCompiler.cmake
+index ba54ed2..2a89ebb 100644
+--- a/CMake/TdSetUpCompiler.cmake
++++ b/CMake/TdSetUpCompiler.cmake
+@@ -96,7 +96,9 @@ function(td_set_up_compiler)
+   endif()
+ 
+   if (WIN32)
+-    add_definitions(-DNTDDI_VERSION=0x06020000 -DWINVER=0x0602 -D_WIN32_WINNT=0x0602 -DPSAPI_VERSION=1 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN)
++    set(TD_WINDOWS_VERSION "0x0602" CACHE STRING "Minimum Windows API version")
++    set(TD_NTDDI_VERSION "0x06020000" CACHE STRING "Minimum Windows NTDDI version")
++    add_definitions(-DNTDDI_VERSION=${TD_NTDDI_VERSION} -DWINVER=${TD_WINDOWS_VERSION} -D_WIN32_WINNT=${TD_WINDOWS_VERSION} -DPSAPI_VERSION=1 -DNOMINMAX -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN)
+   endif()
+   if (CYGWIN)
+     add_definitions(-D_DEFAULT_SOURCE=1 -DFD_SETSIZE=4096)
+diff --git a/tdutils/td/utils/port/FileFd.cpp b/tdutils/td/utils/port/FileFd.cpp
+index 8927647..58dcda7 100644
+--- a/tdutils/td/utils/port/FileFd.cpp
++++ b/tdutils/td/utils/port/FileFd.cpp
+@@ -552,12 +552,20 @@ uint64 filetime_to_unix_time_nsec(LONGLONG filetime) {
+   return static_cast<uint64>((filetime - FILETIME_UNIX_TIME_DIFF) * 100);
+ }
+ 
++#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
++uint64 filetime_to_unix_time_nsec(FILETIME filetime) {
++  const auto ticks = (static_cast<uint64>(filetime.dwHighDateTime) << 32) | filetime.dwLowDateTime;
++  return static_cast<uint64>((static_cast<int64>(ticks) - 116444736000000000ll) * 100);
++}
++#endif
++
+ struct FileSize {
+   int64 size_;
+   int64 real_size_;
+ };
+ 
+ Result<FileSize> get_file_size(const FileFd &file_fd) {
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   FILE_STANDARD_INFO standard_info;
+   if (!GetFileInformationByHandleEx(file_fd.get_native_fd().fd(), FileStandardInfo, &standard_info,
+                                     sizeof(standard_info))) {
+@@ -566,6 +574,16 @@ Result<FileSize> get_file_size(const FileFd &file_fd) {
+   FileSize res;
+   res.size_ = standard_info.EndOfFile.QuadPart;
+   res.real_size_ = standard_info.AllocationSize.QuadPart;
++#else
++  BY_HANDLE_FILE_INFORMATION file_info;
++  if (!GetFileInformationByHandle(file_fd.get_native_fd().fd(), &file_info)) {
++    return OS_ERROR("Get file information failed");
++  }
++  FileSize res;
++  res.size_ = (static_cast<int64>(file_info.nFileSizeHigh) << 32) | file_info.nFileSizeLow;
++  // XP lacks an allocation-size query; use the logical size for this hint.
++  res.real_size_ = res.size_;
++#endif
+ 
+   if (res.size_ > 0 && res.real_size_ <= 0) {  // just in case
+     LOG(ERROR) << "Fix real file size from " << res.real_size_ << " to " << res.size_;
+@@ -603,6 +621,8 @@ Result<Stat> FileFd::stat() const {
+ #elif TD_PORT_WINDOWS
+   Stat res;
+ 
++  DWORD file_attributes;
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   FILE_BASIC_INFO basic_info;
+   auto status = GetFileInformationByHandleEx(get_native_fd().fd(), FileBasicInfo, &basic_info, sizeof(basic_info));
+   if (!status) {
+@@ -610,16 +630,31 @@ Result<Stat> FileFd::stat() const {
+   }
+   res.atime_nsec_ = filetime_to_unix_time_nsec(basic_info.LastAccessTime.QuadPart);
+   res.mtime_nsec_ = filetime_to_unix_time_nsec(basic_info.LastWriteTime.QuadPart);
+-  res.is_dir_ = (basic_info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+-  if ((basic_info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
++  file_attributes = basic_info.FileAttributes;
++#else
++  BY_HANDLE_FILE_INFORMATION basic_info;
++  if (!GetFileInformationByHandle(get_native_fd().fd(), &basic_info)) {
++    return OS_ERROR("Get file information failed");
++  }
++  res.atime_nsec_ = filetime_to_unix_time_nsec(basic_info.ftLastAccessTime);
++  res.mtime_nsec_ = filetime_to_unix_time_nsec(basic_info.ftLastWriteTime);
++  file_attributes = basic_info.dwFileAttributes;
++#endif
++  res.is_dir_ = (file_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
++  if ((file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+     FILE_ATTRIBUTE_TAG_INFO tag_info;
+-    status = GetFileInformationByHandleEx(get_native_fd().fd(), FileAttributeTagInfo, &tag_info, sizeof(tag_info));
++    auto status = GetFileInformationByHandleEx(get_native_fd().fd(), FileAttributeTagInfo, &tag_info, sizeof(tag_info));
+     if (!status) {
+       return OS_ERROR("Get FileAttributeTagInfo failed");
+     }
+     res.is_reg_ = false;
+     res.is_symbolic_link_ =
+         (tag_info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && tag_info.ReparseTag == IO_REPARSE_TAG_SYMLINK;
++#else
++    res.is_reg_ = false;
++    res.is_symbolic_link_ = false;
++#endif
+   } else {
+     res.is_reg_ = !res.is_dir_;
+     res.is_symbolic_link_ = false;
+diff --git a/tdutils/td/utils/port/IPAddress.cpp b/tdutils/td/utils/port/IPAddress.cpp
+index d288768..ab39fa7 100644
+--- a/tdutils/td/utils/port/IPAddress.cpp
++++ b/tdutils/td/utils/port/IPAddress.cpp
+@@ -46,7 +46,7 @@ static bool is_ascii_host(Slice host) {
+   return true;
+ }
+ 
+-#if !TD_WINDOWS
++#if !TD_WINDOWS || !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
+ static void punycode(string &result, Slice part) {
+   vector<uint32> codes;
+   codes.reserve(utf8_length(part));
+@@ -142,7 +142,7 @@ Result<string> idn_to_ascii(Slice host) {
+     return Status::Error("Host name is too long");
+   }
+ 
+-#if TD_WINDOWS
++#if TD_WINDOWS && defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   TRY_RESULT(whost, to_wstring(host));
+   wchar_t punycode[MAX_DNS_NAME_LENGTH + 1];
+   int result_length =
+@@ -177,10 +177,47 @@ Result<string> idn_to_ascii(Slice host) {
+ }
+ 
+ static CSlice get_ip_str(int family, const void *addr) {
+-  const int buf_size = INET6_ADDRSTRLEN;
++  const int buf_size = INET6_ADDRSTRLEN + 8;
+   static TD_THREAD_LOCAL char *buf;
+   init_thread_local<char[]>(buf, buf_size);
+ 
++#if TD_WINDOWS && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600)
++  SOCKADDR_STORAGE address;
++  int address_length;
++  std::memset(&address, 0, sizeof(address));
++  if (family == AF_INET) {
++    auto *ipv4 = reinterpret_cast<SOCKADDR_IN *>(&address);
++    ipv4->sin_family = AF_INET;
++    std::memcpy(&ipv4->sin_addr, addr, sizeof(ipv4->sin_addr));
++    address_length = sizeof(*ipv4);
++  } else if (family == AF_INET6) {
++    auto *ipv6 = reinterpret_cast<SOCKADDR_IN6 *>(&address);
++    ipv6->sin6_family = AF_INET6;
++    std::memcpy(&ipv6->sin6_addr, addr, sizeof(ipv6->sin6_addr));
++    address_length = sizeof(*ipv6);
++  } else {
++    return CSlice();
++  }
++  DWORD length = buf_size;
++  if (WSAAddressToStringA(reinterpret_cast<SOCKADDR *>(&address), address_length, nullptr, buf, &length) != 0) {
++    return CSlice();
++  }
++  if (family == AF_INET6 && buf[0] == '[') {
++    char *end = std::strchr(buf, ']');
++    if (end == nullptr) {
++      return CSlice();
++    }
++    const auto address_size = static_cast<size_t>(end - buf - 1);
++    std::memmove(buf, buf + 1, address_size);
++    buf[address_size] = '\0';
++  } else {
++    char *port = std::strrchr(buf, ':');
++    if (port != nullptr) {
++      *port = '\0';
++    }
++  }
++  return CSlice(buf);
++#else
+   const char *res = inet_ntop(family,
+ #if TD_WINDOWS
+                               const_cast<PVOID>(addr),
+@@ -193,6 +230,37 @@ static CSlice get_ip_str(int family, const void *addr) {
+   } else {
+     return CSlice(res);
+   }
++#endif
++}
++
++static int inet_pton_compat(int family, const char *source, void *destination) {
++#if TD_WINDOWS && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600)
++  string with_port;
++  if (family == AF_INET6) {
++    with_port = "[";
++    with_port += source;
++    with_port += "]:0";
++  } else if (family == AF_INET) {
++    with_port = source;
++    with_port += ":0";
++  } else {
++    return -1;
++  }
++  SOCKADDR_STORAGE address;
++  int address_length = sizeof(address);
++  std::memset(&address, 0, sizeof(address));
++  if (WSAStringToAddressA(with_port.data(), family, nullptr, reinterpret_cast<SOCKADDR *>(&address), &address_length) != 0) {
++    return 0;
++  }
++  if (family == AF_INET) {
++    std::memcpy(destination, &reinterpret_cast<SOCKADDR_IN *>(&address)->sin_addr, sizeof(in_addr));
++  } else {
++    std::memcpy(destination, &reinterpret_cast<SOCKADDR_IN6 *>(&address)->sin6_addr, sizeof(in6_addr));
++  }
++  return 1;
++#else
++  return inet_pton(family, source, destination);
++#endif
+ }
+ 
+ static bool begins_with_bits(const unsigned char addr[16], const unsigned char *prefix, size_t bit_count) {
+@@ -411,7 +479,7 @@ Status IPAddress::init_ipv6_port(CSlice ipv6, int port) {
+   std::memset(&ipv6_addr_, 0, sizeof(ipv6_addr_));
+   ipv6_addr_.sin6_family = AF_INET6;
+   ipv6_addr_.sin6_port = htons(static_cast<uint16>(port));
+-  int err = inet_pton(AF_INET6, ipv6.c_str(), &ipv6_addr_.sin6_addr);
++  int err = inet_pton_compat(AF_INET6, ipv6.c_str(), &ipv6_addr_.sin6_addr);
+   if (err == 0) {
+     return Status::Error(PSLICE() << "Failed inet_pton(AF_INET6, " << ipv6 << ")");
+   } else if (err == -1) {
+@@ -433,7 +501,7 @@ Status IPAddress::init_ipv4_port(CSlice ipv4, int port) {
+   std::memset(&ipv4_addr_, 0, sizeof(ipv4_addr_));
+   ipv4_addr_.sin_family = AF_INET;
+   ipv4_addr_.sin_port = htons(static_cast<uint16>(port));
+-  int err = inet_pton(AF_INET, ipv4.c_str(), &ipv4_addr_.sin_addr);
++  int err = inet_pton_compat(AF_INET, ipv4.c_str(), &ipv4_addr_.sin_addr);
+   if (err == 0) {
+     return Status::Error(PSLICE() << "Failed inet_pton(AF_INET, " << ipv4 << ")");
+   } else if (err == -1) {
+diff --git a/tdutils/td/utils/port/RwMutex.h b/tdutils/td/utils/port/RwMutex.h
+index de8ae6a..588a9cd 100644
+--- a/tdutils/td/utils/port/RwMutex.h
++++ b/tdutils/td/utils/port/RwMutex.h
+@@ -81,7 +81,11 @@ class RwMutex {
+ #if TD_PORT_POSIX
+   pthread_rwlock_t mutex_;
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   unique_ptr<SRWLOCK> mutex_;
++#else
++  unique_ptr<CRITICAL_SECTION> mutex_;
++#endif
+ #endif
+ };
+ 
+@@ -91,8 +95,13 @@ inline void RwMutex::init() {
+ #if TD_PORT_POSIX
+   pthread_rwlock_init(&mutex_, nullptr);
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   mutex_ = make_unique<SRWLOCK>();
+   InitializeSRWLock(mutex_.get());
++#else
++  mutex_ = make_unique<CRITICAL_SECTION>();
++  InitializeCriticalSection(mutex_.get());
++#endif
+ #endif
+ }
+ 
+@@ -101,6 +110,9 @@ inline void RwMutex::clear() {
+ #if TD_PORT_POSIX
+     pthread_rwlock_destroy(&mutex_);
+ #elif TD_PORT_WINDOWS
++#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
++  DeleteCriticalSection(mutex_.get());
++#endif
+     mutex_.release();
+ #endif
+     is_valid_ = false;
+@@ -113,7 +125,11 @@ inline void RwMutex::lock_read_unsafe() {
+ #if TD_PORT_POSIX
+   pthread_rwlock_rdlock(&mutex_);
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   AcquireSRWLockShared(mutex_.get());
++#else
++  EnterCriticalSection(mutex_.get());
++#endif
+ #endif
+ }
+ 
+@@ -122,7 +138,11 @@ inline void RwMutex::lock_write_unsafe() {
+ #if TD_PORT_POSIX
+   pthread_rwlock_wrlock(&mutex_);
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   AcquireSRWLockExclusive(mutex_.get());
++#else
++  EnterCriticalSection(mutex_.get());
++#endif
+ #endif
+ }
+ 
+@@ -131,7 +151,11 @@ inline void RwMutex::unlock_read_unsafe() {
+ #if TD_PORT_POSIX
+   pthread_rwlock_unlock(&mutex_);
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   ReleaseSRWLockShared(mutex_.get());
++#else
++  LeaveCriticalSection(mutex_.get());
++#endif
+ #endif
+ }
+ 
+@@ -140,7 +164,11 @@ inline void RwMutex::unlock_write_unsafe() {
+ #if TD_PORT_POSIX
+   pthread_rwlock_unlock(&mutex_);
+ #elif TD_PORT_WINDOWS
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   ReleaseSRWLockExclusive(mutex_.get());
++#else
++  LeaveCriticalSection(mutex_.get());
++#endif
+ #endif
+ }
+ 
+diff --git a/tdutils/td/utils/port/Stat.cpp b/tdutils/td/utils/port/Stat.cpp
+index 98b96d8..81096b6 100644
+--- a/tdutils/td/utils/port/Stat.cpp
++++ b/tdutils/td/utils/port/Stat.cpp
+@@ -384,6 +384,22 @@ Status cpu_stat_total(CpuStat &stat) {
+ }
+ #endif
+ 
++#if TD_PORT_WINDOWS && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600)
++namespace {
++uint64 get_tick_count_64_compat() {
++  static volatile LONG last_tick = 0;
++  static volatile LONG tick_high = 0;
++  const DWORD now = GetTickCount();
++  const DWORD previous = static_cast<DWORD>(InterlockedExchange(&last_tick, static_cast<LONG>(now)));
++  if (now < previous) {
++    InterlockedIncrement(&tick_high);
++  }
++  const DWORD high = static_cast<DWORD>(InterlockedCompareExchange(&tick_high, 0, 0));
++  return (static_cast<uint64>(high) << 32) | now;
++}
++}  // namespace
++#endif
++
+ Result<CpuStat> cpu_stat() {
+ #if TD_LINUX
+   CpuStat stat;
+@@ -392,7 +408,11 @@ Result<CpuStat> cpu_stat() {
+   return stat;
+ #elif TD_WINDOWS
+   CpuStat stat;
++#if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0600
+   stat.total_ticks_ = static_cast<uint64>(GetTickCount64()) * 10000;
++#else
++  stat.total_ticks_ = get_tick_count_64_compat() * 10000;
++#endif
+   auto hardware_concurrency = thread::hardware_concurrency();
+   if (hardware_concurrency != 0) {
+     stat.total_ticks_ *= hardware_concurrency;
+diff --git a/tdutils/td/utils/port/UdpSocketFd.cpp b/tdutils/td/utils/port/UdpSocketFd.cpp
+index 441f8e8..a84af99 100644
+--- a/tdutils/td/utils/port/UdpSocketFd.cpp
++++ b/tdutils/td/utils/port/UdpSocketFd.cpp
+@@ -231,10 +231,13 @@ class UdpSocketFdImpl final : private Iocp::Callback {
+       to_send_ = send_queue_.pop();
+     }
+     std::memset(&send_overlapped_, 0, sizeof(send_overlapped_));
+-    WSAMSG message;
+-    UdpSocketSendHelper send_helper;
+-    send_helper.to_native(to_send_, message);
+-    auto status = WSASendMsg(get_native_fd().socket(), &message, 0, nullptr, &send_overlapped_, nullptr);
++    WSABUF buffer;
++    buffer.buf = const_cast<char *>(to_send_.data.as_slice().begin());
++    buffer.len = narrow_cast<DWORD>(to_send_.data.size());
++    DWORD bytes_sent = 0;
++    auto status = WSASendTo(get_native_fd().socket(), &buffer, 1, &bytes_sent, 0,
++                            const_cast<sockaddr *>(to_send_.address.get_sockaddr()),
++                            narrow_cast<int>(to_send_.address.get_sockaddr_len()), &send_overlapped_, nullptr);
+     if (status == 0 || check_status("WSASendMsg failed")) {
+       inc_refcnt();
+       is_send_active_ = true;

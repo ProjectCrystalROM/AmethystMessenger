@@ -78,10 +78,10 @@ install_pe() {
 }
 objdump=${AMETHYST_MINGW_OBJDUMP:-i686-w64-mingw32-objdump}
 if [[ "$flavor" == xp ]]; then
-    for dll in "$discord_dll" "$json_glib_dll"; do
+    for dll in "$discord_dll" "$json_glib_dll" "$telegram_dll"; do
         imports=$("$objdump" -p "$dll")
-        if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx' <<<"$imports"; then
-            echo "Vista-only imports remain in XP Discord dependency $dll" >&2
+        if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx|IdnToAscii|WSASendMsg' <<<"$imports"; then
+            echo "Vista-only imports remain in XP protocol dependency $dll" >&2
             exit 1
         fi
     done
@@ -100,6 +100,10 @@ elif ! grep -Fq 'remote-auth-gateway.discord.gg' <<<"$discord_strings"; then
     echo "Modern Discord DLL is missing QR-auth support" >&2
     exit 1
 fi
+telegram_metadata=$("$objdump" -p "$telegram_dll")
+telegram_subsystem=$(awk '/MajorSubsystemVersion/{print $2; exit}' <<<"$telegram_metadata")
+telegram_minor=$(awk '/MinorSubsystemVersion/{print $2; exit}' <<<"$telegram_metadata")
+test "$telegram_subsystem" = "$expected_subsystem_major" && test "$telegram_minor" = "$expected_subsystem_minor"
 install_pe pidgin/amethyst.exe amethyst.exe
 install_pe pidgin/pidgin.dll pidgin.dll
 install_pe libpurple/libpurple.dll libpurple.dll

@@ -7,16 +7,20 @@ libpurple runtime remains in use; an application upgrade was not needed.
 
 ## Compatibility
 
-The Amethyst executable and existing protocols retain the Windows XP target.
-The Telegram DLL is built for Vista (PE subsystem 6.0) and imports
-Vista-era APIs including `GetTickCount64`, SRW locks, and condition variables.
-Consequently Telegram is available on Vista SP2 and later, while the XP-targeted
-application and its other plugins remain usable on XP. The DLL does not load on
-XP. PE compatibility is based on static inspection. On the Vista SP2 test
-machine, Telegram login and buddy addition were verified; the tester later
-confirmed send and receive in one-to-one DMs, group chats, and forum topics.
-DM/topic history is chronological and paginated. Topic-specific attachments
-remain unsupported.
+The Amethyst executable and selected protocols retain the Windows XP target.
+TDLib now has a separate XP desktop build path. It keeps the Vista code paths
+for Vista builds and provides XP fallbacks for synchronization, file metadata,
+timekeeping, IDN/IP formatting, and UDP sends. The XP-built Telegram plugin has
+PE subsystem 5.1 and its static import table contains no known Vista-only APIs.
+Its MinGW winpthread runtime is linked into the plugin, so it adds no runtime
+DLL requirement. This is static compatibility evidence, not an XP runtime test.
+
+The original Vista SP2 runtime test verified Telegram login and buddy addition;
+the tester later confirmed send and receive in one-to-one DMs, group chats, and
+forum topics. DM/topic history is chronological and paginated. Topic-specific
+attachments remain unsupported. Telegram on XP still needs runtime testing on
+the user's XP SP3 machine. IPv6 is required for Telegram connectivity in the
+reported XP setup; enable the Windows IPv6 networking component.
 
 The plugin also loads in the Linux-hosted Wine smoke test. Wine verifies
 packaging and ABI loading; Telegram authentication and messaging were tested
@@ -62,11 +66,41 @@ this build are recorded in [THIRD-PARTY-SOURCES.md](THIRD-PARTY-SOURCES.md).
 `AMETHYST_TDLIB_SOURCE` and `AMETHYST_TDLIB_BUILD` refer to the same TDLib source
 and cross-build directories used to make the static TDLib libraries.
 
-Before configuring TDLib, apply the checked-in Windows compatibility patch:
+Before configuring TDLib, apply the checked-in Windows compatibility patches
+in order:
 
 ```sh
 patch -d "$AMETHYST_TDLIB_SOURCE" -p1 < third_party/patches/tdlib-desktop-vista.patch
+patch -d "$AMETHYST_TDLIB_SOURCE" -p1 < third_party/patches/tdlib-desktop-xp.patch
 ```
+
+For an XP build, configure TDLib with its Windows API target set to XP and use
+the XP-compatible OpenSSL prefix. With the pinned TDLib source and generated
+files available:
+
+```sh
+cmake -S "$AMETHYST_TDLIB_SOURCE" -B "$AMETHYST_TDLIB_BUILD" \
+  -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=i686 \
+  -DCMAKE_C_COMPILER=i686-w64-mingw32-gcc-win32 \
+  -DCMAKE_CXX_COMPILER="$AMETHYST_MINGW_CXX" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DTD_WINDOWS_VERSION=0x0501 -DTD_NTDDI_VERSION=0x05010300 \
+  -DCMAKE_C_FLAGS='-O3 -DNDEBUG' \
+  -DCMAKE_CXX_FLAGS='-std=c++17 -fno-exceptions -fno-rtti -O3 -DNDEBUG' \
+  -DCMAKE_INSTALL_PREFIX="$AMETHYST_TDLIB_DIR/.." \
+  -DOPENSSL_ROOT_DIR="$AMETHYST_OPENSSL_PREFIX" \
+  -DOPENSSL_USE_STATIC_LIBS=TRUE \
+  -DZLIB_INCLUDE_DIR="$AMETHYST_ZLIB_PREFIX/include" \
+  -DZLIB_LIBRARY="$AMETHYST_ZLIB_PREFIX/lib/libz.a" \
+  -DTD_ENABLE_DOTNET=OFF -DTD_ENABLE_JNI=OFF -DTD_ENABLE_LTO=OFF -DTD_ENABLE_PCH=OFF
+cmake --build "$AMETHYST_TDLIB_BUILD" --target install --parallel 4
+```
+
+Set `AMETHYST_TELEGRAM_TARGET=xp` when building the plugin. The build script
+links winpthread statically and checks the resulting PE subsystem and imports.
+`AMETHYST_TELEGRAM_TARGET=vista` remains the default and preserves the existing
+Vista build behavior. Build into separate TDLib install/build directories for
+XP and Vista so their static libraries cannot be mixed.
 
 ```sh
 export AMETHYST_MINGW_CXX=/path/to/i686-w64-mingw32-g++
