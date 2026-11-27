@@ -1,10 +1,18 @@
 # Windows build and compatibility
 
-Amethyst Messenger builds as a 32-bit Windows application. The compiler target uses MinGW-w64 i686, `_WIN32_WINNT=0x0501`, `WINVER=0x0501`, and PE subsystem 5.1. Runtime and development libraries follow the Pidgin 2.11.0 GTK2 build. The GTK SDK and GLib SDK serve compilation; the unchanged official Pidgin 2.11.0 runtime supplies bundled GTK2 and supporting protocol dependencies.
+Amethyst Messenger builds as a 32-bit Windows application based on the Pidgin
+2.11.0 GTK2/GLib runtime. The main application uses MinGW-w64 i686,
+`_WIN32_WINNT=0x0501`, `WINVER=0x0501`, and PE subsystem 5.1. The Discord plugin
+is built separately for each release flavor: XP (subsystem 5.1, no QR auth) or
+modern (Vista API target/subsystem 6.0, QR auth enabled). The unchanged official
+Pidgin 2.11.0 runtime supplies bundled GTK2 and supporting protocol
+dependencies.
 
 ## Pinned inputs
 
-The build script expects these files in an input directory. Obtain the original artifacts from their upstream distribution sources and verify the hashes recorded in `packaging/windows/inputs.sha256` before use.
+The build script expects these files in an input directory. Obtain the original
+artifacts from their upstream distribution sources and verify the hashes
+recorded in `packaging/windows/inputs.sha256` before use.
 
 - `pidgin-2.11.0-offline.exe`, official Windows runtime distribution.
 - `gtk-sdk.zip`, GTK+ 2.14.7 development SDK used by the historical build.
@@ -12,27 +20,68 @@ The build script expects these files in an input directory. Obtain the original 
 - `libxml2-sdk.tar.gz`, libxml2 2.9.2 Windows SDK.
 - `gtkspell-sdk.tar.bz2`, GtkSpell 2.0.16 Windows SDK.
 
-Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3, Python 3, `unzip`, and `tar`. The upstream generated Windows makefiles are retained. Build XP-targeted OpenSSL for Discord with [the OpenSSL recipe](DISCORD-WINDOWS.md), then build the protocol plugins and installer:
+Use a Linux host with MinGW-w64 i686 GCC/binutils, GNU make, 7-Zip, NSIS 3,
+Python 3, `unzip`, and `tar`. Build Discord once for each flavor:
+
+```sh
+AMETHYST_DISCORD_FLAVOR=xp packaging/windows/build-discord-plugin.sh
+AMETHYST_DISCORD_FLAVOR=modern packaging/windows/build-discord-plugin.sh
+```
+
+Build both installers by passing the matching plugin paths and release flavor
+to `packaging/windows/build.sh`:
 
 ```sh
 AMETHYST_TELEGRAM_DLL=/path/to/telegram-plugin-output/libtelegram-tdlib.dll \
-AMETHYST_DISCORD_DLL=/path/to/discord-plugin-output/libdiscord.dll \
-AMETHYST_JSON_GLIB_DLL=/path/to/discord-plugin-output/libjson-glib-1.0-0.dll \
-make -f Makefile.mingw installer_offline \
-  AMETHYST_INPUTS=/path/to/verified-inputs \
-  AMETHYST_OUTPUT="$PWD/output"
+AMETHYST_DISCORD_DLL=/path/to/discord-xp/libdiscord.dll \
+AMETHYST_JSON_GLIB_DLL=/path/to/discord-xp/libjson-glib-1.0-0.dll \
+AMETHYST_RELEASE_FLAVOR=xp \
+packaging/windows/build.sh /path/to/verified-inputs output/release-xp
+
+AMETHYST_TELEGRAM_DLL=/path/to/telegram-plugin-output/libtelegram-tdlib.dll \
+AMETHYST_DISCORD_DLL=/path/to/discord-modern/libdiscord.dll \
+AMETHYST_JSON_GLIB_DLL=/path/to/discord-modern/libjson-glib-1.0-0.dll \
+AMETHYST_RELEASE_FLAVOR=modern \
+packaging/windows/build.sh /path/to/verified-inputs output/release-modern
 ```
 
-The output is `amethyst-messenger-2.11.0-win32.exe`, with `SHA256SUMS`. `packaging/windows/build.sh` builds libpurple, the GTK UI, launcher, and msn-pecan plugin, then stages the official runtime with AIM, MSN, XMPP, Discord, and Telegram enabled. Other upstream protocol plugin DLLs are removed from the installer while their source remains in the repository. Build tdlib-purple as described in [Telegram on Windows](TELEGRAM-WINDOWS.md). Build Discord and its QR login support with [Discord on Windows](DISCORD-WINDOWS.md); this emits both the plugin and its JSON-GLib runtime. The package omits the old launcher and native MSN plugin. It does not modify an existing installation or user profile.
+The installers are named `amethyst-messenger-2.11.0-win32-xp.exe` and
+`amethyst-messenger-2.11.0-win32.exe`, respectively. Each output folder
+contains its own `SHA256SUMS`. The release retains AIM, MSN (the integrated
+msn-pecan implementation), XMPP, Discord, and Telegram. Other upstream
+protocol plugin DLLs are removed from the installers while their source
+remains in the repository. Telegram currently requires Vista or later; its DLL
+is retained in both packages as before, but is not available on XP.
 
-The build regenerates the Windows `config.h` from the checked-in MinGW template with the release version substituted, then regenerates the MinGW `libpurple/version.h`. The application and libpurple use the x86 XP API target and PE subsystem version 5.1 with static MinGW GCC runtime linkage. The NSIS installer contains no OS-version gate; source inspection found no launcher check that rejects NT 5.2 (XP x64) or distinguishes x86 from x64 Vista. A launcher version check only selects a DLL-search compatibility path. The same 32-bit package is intended to run natively on x86 and through WOW64 on x64. Review all resulting PE imports with `objdump -p` or PE inspection tools, including recursively bundled DLLs, whenever compiler or runtime inputs change. Static inspection does not replace XP runtime testing.
+The installer packages the official runtime and does not modify an existing
+installation or user profile. It omits the old launcher and native MSN plugin.
 
-## Runtime checks and status
+## Compatibility and validation
 
-A Wine startup smoke test can check installer operation, executable launch, resource metadata, and protocol registration. The XP-targeted Discord plugin passed PE import and subsystem checks and was probed without a loader error in a fresh Wine prefix configured as Windows XP x64. Wine is not a Windows XP test; actual XP x64 account-list, login, and messaging checks remain pending before claiming XP runtime support. The earlier Vista build was used on Vista SP2; the tester confirmed Telegram DM/group/topic send and receive, Discord QR login and DM/server send and receive, and earlier MSN sign-in and buddy addition. XP remains pending runtime validation.
+The main app, launcher, and libpurple use the x86 XP API target and PE
+subsystem 5.1 with static MinGW GCC runtime linkage. The installer has no OS
+version gate; the same 32-bit package is intended to run natively on XP x86 and
+through WOW64 on XP x64. Review PE imports of all new binaries and recursively
+bundled DLLs whenever compiler/runtime inputs change. Static inspection does
+not replace OS testing.
 
-To test MSN, create a new **MSN** account using CrossTalk credentials. The client writes its separate profile to `%APPDATA%\Amethyst Messenger`. Do not put credentials or session logs in the repository. Redact them from diagnostic output.
+The XP Discord build omits the QR remote-auth implementation, QRencode, and
+OpenSSL crypto; password and 2FA login are retained. The modern build keeps QR
+login for Vista SP2 and later. The user successfully logged in with password
+and 2FA on XP before this release split, using the prior XP-targeted build that
+still included QR; testing the final no-QR package remains. The user confirmed
+QR login and Discord DM/server messaging on Vista using the earlier modern
+build. See [COMPATIBILITY.md](COMPATIBILITY.md) for the tested/static/untested
+matrix.
+
+To test MSN, create a new **MSN** account using CrossTalk credentials. The
+client writes its separate profile to `%APPDATA%/Amethyst Messenger`. Do not
+put credentials or session logs in the repository. Redact them from diagnostic
+output.
 
 ## Corresponding source
 
-This repository contains the Amethyst/Pidgin and integrated msn-pecan source, Windows build scripts, input hashes, and upstream notices. Third-party binary runtime dependencies retain their upstream licenses and source obligations. See [LICENSING.md](LICENSING.md) for the source provenance and remaining archive work.
+This repository contains the Amethyst/Pidgin and integrated msn-pecan source,
+Windows build scripts, input hashes, and upstream notices. Third-party binary
+runtime dependencies retain their upstream licenses and source obligations.
+See [LICENSING.md](LICENSING.md) for source provenance and archive details.

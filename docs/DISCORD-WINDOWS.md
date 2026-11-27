@@ -1,10 +1,11 @@
 # Discord plugin on Windows
 
-The Windows installer includes the `purple-discord` protocol plugin as
+The installer includes the `purple-discord` protocol plugin as
 `plugins/libdiscord.dll`. The vendored code is based on EionRobb's
 `purple-discord` commit `2b85bbfad5e915f60f2c4ca30c1e7d720762c148`; Amethyst's
-consent handling and build integration are local changes. QR-code login is
-enabled in the Windows build.
+consent handling and build integration are local changes. Releases have two
+Discord builds: the XP flavor uses email/password login (including 2FA) and
+omits QR login; the modern flavor retains QR and email/password login.
 
 ## Consent and service policy
 
@@ -25,51 +26,43 @@ Discord.
 
 ## Login
 
-Add an account and choose **Discord**. QR login is available when no saved token
-or email/password is configured. The plugin displays a QR code for scanning
-with the Discord mobile app. The plugin also retains its upstream
-email/password login path. Do not share QR codes, tokens, or debug logs that
-contain authentication data.
+Add an account and choose **Discord**. On modern builds, QR login is available
+when no saved token or email/password is configured; scan the displayed code
+with the Discord mobile app. On XP builds, configure email and password, then
+complete the second-factor prompt if the account requires it. Password and 2FA
+login succeeded on the user's XP test before this release split; the final
+no-QR installer still needs a retest. Do not share QR codes, tokens, or debug
+logs that contain authentication data.
 
 ## Windows compatibility and validation
 
-The Discord plugin is built as 32-bit Windows code with XP API macros and PE
-subsystem version 5.1. Its statically linked OpenSSL 3.0.0 is also built for
-XP, selecting OpenSSL's existing `CRITICAL_SECTION` lock backend instead of
-Vista's SRW locks. Static inspection found no Vista-only imports in the plugin
-or JSON-GLib DLL. The same x86 plugin is intended to run natively on XP x86 and
-under WOW64 on XP x64. Wine XP-mode loading and protocol registration are being
-checked; actual Windows XP x64 login and messaging still need confirmation.
-Vista SP2 login and DM/server messaging were previously confirmed by the user.
-Wine installation, startup, plugin probing, and the first-connect consent
-dialog were checked. In a temporary account profile, choosing the default
-decline action changed Discord's `auto-login` setting from enabled to disabled;
-no credentials were configured in that test. The Vista SP2 tester has
-confirmed QR login and Discord send and receive in DMs and servers. Other
+The XP Discord plugin is 32-bit, built with XP API macros and PE subsystem
+5.1. QR auth is compiled out, so this DLL has no QRencode or OpenSSL crypto
+dependency. Static inspection found no Vista-only imports in it or its
+JSON-GLib runtime. The modern Discord plugin retains QR auth, OpenSSL crypto,
+and QRencode and targets Vista API level/subsystem 6.0. The same x86 XP plugin
+is intended to run natively on XP x86 and under WOW64 on XP x64. The user
+successfully logged in on XP with password and 2FA using the previous
+QR-enabled XP-targeted build; final no-QR package validation remains pending.
+Vista SP2 QR login and DM/server messaging were confirmed by the user. Other
 server and presence features, and reconnection have not been checked.
 
-Build XP-targeted OpenSSL 3.0.0 from the pinned source used by the Telegram
-source bundle, then build the plugin and its JSON-GLib runtime from the checked-
-in source inputs:
+Build both flavors and their JSON-GLib runtime from the checked-in source
+inputs:
 
 ```sh
-AMETHYST_OPENSSL_SOURCE_DIR=/path/to/openssl-3.0.0 \
-  packaging/windows/build-openssl-xp.sh
-packaging/windows/build-discord-plugin.sh
+AMETHYST_DISCORD_FLAVOR=xp packaging/windows/build-discord-plugin.sh
+AMETHYST_DISCORD_FLAVOR=modern packaging/windows/build-discord-plugin.sh
 ```
 
-The OpenSSL recipe outputs to `../.amethyst-build/windows-extra/openssl-xp-install`
-by default. The Discord build uses that prefix and emits an XP-targeted DLL;
-`AMETHYST_OPENSSL_PREFIX` can select another XP-targeted prefix. The scripts
-require the historical GTK2 and GLib SDKs, MinGW-w64 i686 Win32 toolchain, and
-zlib prefix. The OpenSSL build requires the exact 3.0.0 source archive named in
-`THIRD-PARTY-SOURCES.md`. It verifies
-the SHA-256 checksums for JSON-GLib 0.14.2 and libqrencode 4.1.1 source
-archives, then builds those dependencies locally. It writes `libdiscord.dll`
-and `libjson-glib-1.0-0.dll` under `output/discord-plugin/`. The OpenSSL crypto
-backend is statically linked for Discord's QR authentication only; Pidgin's
-existing TLS backend is unchanged.
+The scripts require the historical GTK2 and GLib SDKs, MinGW-w64 i686 Win32
+toolchain, and zlib prefix. They verify SHA-256 checksums for JSON-GLib 0.14.2
+and libqrencode 4.1.1 source archives. Both flavors build JSON-GLib locally;
+only modern builds QRencode and links OpenSSL crypto. Outputs are kept separate
+under `output/discord-xp/` and `output/discord-modern/`. Pidgin's existing TLS
+backend is unchanged. The XP flavor's default build directory is
+`.build/discord-xp-win32`; modern uses `.build/discord-modern-win32`.
 
-Set `AMETHYST_DISCORD_DLL` and `AMETHYST_JSON_GLIB_DLL` to those outputs when
-building the full installer. The plugin and dependency licenses and source
-archives are staged into its `Licenses` directory.
+The complete installer build accepts the matching plugin paths and
+`AMETHYST_RELEASE_FLAVOR=xp` or `modern`; see [BUILD-WINDOWS.md](BUILD-WINDOWS.md).
+Licenses and the corresponding source archives are included in the installers.

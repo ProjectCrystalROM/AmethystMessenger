@@ -15,10 +15,10 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 | Platform | Status |
 | --- | --- |
 | Windows Vista SP2 | Tester confirms Telegram DM, group chat, and topic send/receive, plus Discord QR login and DM/server send/receive. The same 32-bit package applies on x86 and x64 Vista; x64 runs it through WOW64. |
-| Windows XP SP3 x86 and XP Professional x64 SP2 | The 32-bit build targets XP APIs and PE subsystem 5.1. x64 runs the same binary through WOW64. Static assessment only; no XP runtime test. |
+| Windows XP SP3 x86 and XP Professional x64 SP2 | XP release flavor targets XP APIs and PE subsystem 5.1, and omits Discord QR login. Password plus 2FA login succeeded on XP with the previous XP-targeted plugin; the new no-QR installer still needs retesting. x64 uses WOW64. |
 | Wine | Used for packaging and startup smoke tests; this does not establish Windows compatibility. |
 
-The application and existing bundled protocols retain the XP SP3 target. Discord targets XP; Telegram still imports Vista APIs and will not load on XP.
+The application and existing bundled protocols retain the XP SP3 target. Discord has separate XP (password/2FA, no QR) and modern (QR enabled) builds. Telegram still imports Vista APIs and will not load on XP.
 
 The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. The included protocols remain subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
@@ -30,7 +30,7 @@ The application stores its Windows profile under `%APPDATA%\Amethyst Messenger` 
 
 ## Build
 
-See [Windows build instructions](docs/BUILD-WINDOWS.md) for the pinned historical SDKs, compiler setup, reproducible installer command, and [compatibility report](docs/COMPATIBILITY.md). The standard MinGW `installer` and `installer_offline` targets produce the integrated Amethyst package. The build accepts a separate directory of locally acquired, checksum-verified SDK archives and writes packages to `output/`.
+See [Windows build instructions](docs/BUILD-WINDOWS.md) for the pinned historical SDKs, compiler setup, reproducible XP and modern installer commands, and [compatibility report](docs/COMPATIBILITY.md). The build accepts a separate directory of locally acquired, checksum-verified SDK archives and writes packages to `output/`.
 
 For Unix GTK2 builds, use the upstream Pidgin 2.11.0 Autotools build process. The executable is named `amethyst`; libpurple retains its original library and ABI names.
 
@@ -44,7 +44,7 @@ The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupial
 
 ## Discord
 
-The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin now targets XP APIs, but Windows XP runtime loading and login have not yet been verified. Vista QR login and DM and server messaging were confirmed on the earlier build. Other Discord features remain unverified.
+The Windows releases include [purple-discord](https://github.com/EionRobb/purple-discord). The XP installer omits QR login and uses email/password with 2FA; the modern installer retains QR login. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. XP password+2FA succeeded with the previous XP-targeted plugin, but the new no-QR build awaits retest. Vista QR login and DM/server messaging were confirmed on an earlier modern build. Other Discord features remain unverified.
 
 ## Source, attribution, and contributions
 

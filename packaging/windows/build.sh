@@ -12,6 +12,12 @@ if [[ -z "$telegram_dll" || ! -f "$telegram_dll" ]]; then
 fi
 discord_dll=${AMETHYST_DISCORD_DLL:-}
 json_glib_dll=${AMETHYST_JSON_GLIB_DLL:-}
+flavor=${AMETHYST_RELEASE_FLAVOR:-xp}
+case "$flavor" in
+    xp) expected_subsystem_major=5; expected_subsystem_minor=1 ;;
+    modern) expected_subsystem_major=6; expected_subsystem_minor=0 ;;
+    *) echo "AMETHYST_RELEASE_FLAVOR must be 'xp' or 'modern'" >&2; exit 2 ;;
+esac
 if [[ -z "$discord_dll" || ! -f "$discord_dll" || -z "$json_glib_dll" || ! -f "$json_glib_dll" ]]; then
     echo "Set AMETHYST_DISCORD_DLL and AMETHYST_JSON_GLIB_DLL to the outputs of build-discord-plugin.sh." >&2
     exit 2
@@ -71,16 +77,29 @@ install_pe() {
     SOURCE_DATE_EPOCH=0 i686-w64-mingw32-strip --strip-unneeded -o "$payload/$2" "$1"
 }
 objdump=${AMETHYST_MINGW_OBJDUMP:-i686-w64-mingw32-objdump}
-for dll in "$discord_dll" "$json_glib_dll"; do
-    imports=$("$objdump" -p "$dll")
-    if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx' <<<"$imports"; then
-        echo "Vista-only imports remain in Discord dependency $dll" >&2
+if [[ "$flavor" == xp ]]; then
+    for dll in "$discord_dll" "$json_glib_dll"; do
+        imports=$("$objdump" -p "$dll")
+        if grep -Eq 'AcquireSRWLock|InitializeSRWLock|ReleaseSRWLock|ConditionVariable|GetTickCount64|GetFileInformationByHandleEx' <<<"$imports"; then
+            echo "Vista-only imports remain in XP Discord dependency $dll" >&2
+            exit 1
+        fi
+    done
+fi
+discord_metadata=$("$objdump" -p "$discord_dll")
+discord_subsystem=$(awk '/MajorSubsystemVersion/{print $2; exit}' <<<"$discord_metadata")
+discord_minor=$(awk '/MinorSubsystemVersion/{print $2; exit}' <<<"$discord_metadata")
+test "$discord_subsystem" = "$expected_subsystem_major" && test "$discord_minor" = "$expected_subsystem_minor"
+discord_strings=$(strings "$discord_dll")
+if [[ "$flavor" == xp ]]; then
+    if grep -Eqi 'remote-auth-gateway|remote-auth/login' <<<"$discord_strings"; then
+        echo "XP Discord DLL contains QR-auth endpoints" >&2
         exit 1
     fi
-done
-discord_subsystem=$("$objdump" -p "$discord_dll" | awk '/MajorSubsystemVersion/{print $2; exit}')
-discord_minor=$("$objdump" -p "$discord_dll" | awk '/MinorSubsystemVersion/{print $2; exit}')
-test "$discord_subsystem" = 5 && test "$discord_minor" = 1
+elif ! grep -Fq 'remote-auth-gateway.discord.gg' <<<"$discord_strings"; then
+    echo "Modern Discord DLL is missing QR-auth support" >&2
+    exit 1
+fi
 install_pe pidgin/amethyst.exe amethyst.exe
 install_pe pidgin/pidgin.dll pidgin.dll
 install_pe libpurple/libpurple.dll libpurple.dll
@@ -132,7 +151,11 @@ for entry in sorted(root.rglob("*"), key=lambda path: (-len(path.parts), path)):
 PY
 
 mkdir -p "$output"
-setup="$output/amethyst-messenger-2.11.0-win32.exe"
+if [[ "$flavor" == xp ]]; then
+    setup="$output/amethyst-messenger-2.11.0-win32-xp.exe"
+else
+    setup="$output/amethyst-messenger-2.11.0-win32.exe"
+fi
 makensis "-DOUTPUT=$setup" "-DPAYLOAD=$payload" "-DREMOVAL=$work/remove.nsh" \
     "-DICON=$root/pidgin/pixmaps/pidgin.ico" "$root/packaging/windows/amethyst.nsi"
 (cd "$output" && sha256sum "$(basename "$setup")" > SHA256SUMS)
