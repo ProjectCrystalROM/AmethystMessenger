@@ -24,8 +24,9 @@ The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It i
 | MSN implementation | Passed in Wine using a no-credential protocol probe. The installed `prpl-msn-pecan` implementation loaded and returned account-picker name `MSN`. |
 | Telegram plugin | Built against libpurple 2.11.0 and loaded in a fresh Wine-installed package. Debug output confirms plugin initialization. Account-picker interaction and Telegram sign-in/messaging were not tested. |
 | Discord plugin build | Passed from checked-in, SHA-256-pinned JSON-GLib 0.14.2 and libqrencode 4.1.1 source archives. `USE_QRCODE_AUTH` is enabled; QRencode and OpenSSL crypto are statically linked. |
-| Discord plugin imports | Static inspection passed for x86 and Vista subsystem target. JSON-GLib imports only bundled GLib/GIO/GObject and standard Windows DLLs. No `libwinpthread`, OpenSSL, API-set, or Universal CRT dependency is imported by the Discord plugin. |
-| Discord login and messages | Not tested; no Discord account was used. Consent UI and decline behavior are implemented but still need interactive runtime validation. |
+| Discord plugin and icon loading | Passed Wine package/startup probe with JSON-GLib runtime and 16, 22, and 48 px protocol icons included. No plugin load error was logged. |
+| Discord consent dialog | Passed in Wine using a temporary account with no credentials. The first-connect warning appeared; choosing its default decline action disabled that account (`auto-login=0`). No Discord authentication request was made. Continue/accept behavior remains untested. |
+| Discord login and messages | Not tested; QR approval, contacts, presence, chat, and reconnection have not been exercised against Discord. |
 | Plugin selection | Passed. The installer contains `plugins/libmsn.dll` from msn-pecan and omits `pidgin.exe` and the upstream native MSN DLL. Existing protocol plugins are retained. |
 | Dependencies | Passed static recursive PE inspection for x86 architecture, API-set imports, and Universal CRT imports. Existing GTK2, NSS, and support DLLs were retained. |
 | Windows Vista SP2 | Not tested with this branded package. A user previously verified login and adding a buddy with the integrated Pecan implementation on Vista SP2. |

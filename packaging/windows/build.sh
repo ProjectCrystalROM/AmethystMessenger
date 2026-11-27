@@ -70,6 +70,10 @@ mkdir -p "$payload/pixmaps/pidgin/protocols"/{16,22,48}
 install -m 644 third_party/tdlib-purple/data/telegram16.png "$payload/pixmaps/pidgin/protocols/16/telegram.png"
 install -m 644 third_party/tdlib-purple/data/telegram22.png "$payload/pixmaps/pidgin/protocols/22/telegram.png"
 install -m 644 third_party/tdlib-purple/data/telegram48.png "$payload/pixmaps/pidgin/protocols/48/telegram.png"
+for size in 16 22 48; do
+    install -m 644 "artwork/protocol-icons/discord/$size.png" \
+        "$payload/pixmaps/pidgin/protocols/$size/discord.png"
+done
 make -C pidgin/pixmaps -f Makefile.mingw PIDGIN_INSTALL_DIR="$payload" install
 make -C share/ca-certs -f Makefile.mingw PIDGIN_INSTALL_DIR="$payload" install
 

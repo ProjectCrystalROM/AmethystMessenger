@@ -46,7 +46,7 @@ The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupial
 
 ## Discord
 
-The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. Discord does not authorize this client integration, and Amethyst cannot promise that Discord will continue allowing access. Discord account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. Build and plugin loading are checked locally, but live Discord login and messaging have not been tested.
+The Windows package includes [purple-discord](https://github.com/EionRobb/purple-discord), with QR-code login enabled. On the first connection attempt for each account, Amethyst shows a policy and account-risk notice. Choosing **Decline and Disable Account** disables that account; choosing **Continue at My Own Risk** records consent for that account and proceeds. [Discord's policy](https://discord.com/safety/platform-manipulation-policy-explainer) says client modifications are not allowed; Amethyst cannot promise tolerance or continued access. Account use is at the user's risk. The plugin is built for Vista and later; XP is unsupported. Wine testing confirmed plugin loading and that declining turns the account off. Live Discord login and messaging have not been tested.
 
 ## Source, attribution, and contributions
 

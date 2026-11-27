@@ -17,9 +17,11 @@ accounts. If the user later re-enables the declined account, the warning is
 shown again. Consent is per account and stored in Amethyst's account
 configuration.
 
-Discord's current platform rules do not provide official approval or a
-guarantee of tolerance for this client. Account use is at the user's risk.
-This is an independent third-party plugin and is not endorsed by Discord.
+Discord's current [Platform Manipulation Policy](https://discord.com/safety/platform-manipulation-policy-explainer)
+says client modifications are not allowed. It does not provide official
+approval or a guarantee of tolerance for this client. Account use is at the
+user's risk. This is an independent third-party plugin and is not endorsed by
+Discord.
 
 ## Login
 
@@ -35,8 +37,11 @@ The Discord plugin is built as 32-bit Windows code with Vista API and PE
 subsystem targets. It imports Vista's SRW-lock API, so it does not load on
 Windows XP. It should run on Vista SP2 x86 and under WOW64 on 64-bit Vista, but
 those OS combinations have not been runtime-tested in this build environment.
-Wine startup and plugin loading are packaging checks only. Live Discord login,
-QR approval, contacts, presence, messaging, and reconnection are untested.
+Wine installation, startup, plugin probing, and the first-connect consent
+dialog were checked. In a temporary account profile, choosing the default
+decline action changed Discord's `auto-login` setting from enabled to disabled;
+no credentials were configured and no Discord login was attempted. Live login,
+QR approval, contacts, presence, messaging, and reconnection remain untested.
 
 Build the plugin and its JSON-GLib runtime from the checked-in source inputs:
 
