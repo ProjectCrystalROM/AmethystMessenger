@@ -642,6 +642,11 @@ static void showMessageTextChat(TdAccountData &account, const td::td_api::chat &
     int purpleId = topicId > 0 ? account.getPurpleForumTopicId(getId(chat), topicId)
                               : account.getPurpleChatId(getId(chat));
     PurpleConvChat *conv = getChatConversation(account, chat, purpleId, topicId);
+    if (topicId > 0)
+        purple_debug_misc(config::pluginId,
+            "Routing forum message %" G_GINT64_FORMAT " in chat %" G_GINT64_FORMAT
+            " topic %d to purple chat %d (conversation %s)\n",
+            message.id.value(), getId(chat).value(), topicId, purpleId, conv ? "open" : "missing");
 
     if (text) {
         if (flags & PURPLE_MESSAGE_SEND) {

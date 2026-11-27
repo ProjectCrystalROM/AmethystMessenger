@@ -42,7 +42,7 @@ The integrated msn-pecan protocol is packaged as `plugins/libmsn.dll` with proto
 
 ## Telegram
 
-The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Forum supergroups are presented as categories, with each visible topic as a child room; topic conversations load recent messages and route text sends and read receipts to the selected topic. Only the initial 50-message topic history is loaded; older-topic-history paging and topic-specific attachment sending are not implemented yet. Wine startup testing confirms libpurple loads the plugin, and Vista account authentication and messaging have been tested. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, feature limits, and the Vista requirement.
+The Windows installer includes [tdlib-purple](https://github.com/UnitedMarsupials/tdlib-purple), registered as **Telegram (tdlib)**. Forum supergroups appear as Pidgin contact groups, with each visible topic as a chat room beneath its group. Topic text sends reach Telegram, but topic messages currently fail to display in the client; this is under investigation. Only the initial 50-message topic history is loaded; older-topic-history paging and topic-specific attachment sending are not implemented yet. Wine startup testing confirms libpurple loads the plugin, and Vista account authentication and regular chat messaging have been tested. See [Telegram on Windows](docs/TELEGRAM-WINDOWS.md) for account setup, API credential overrides, feature limits, and the Vista requirement.
 
 ## Source, attribution, and contributions
 

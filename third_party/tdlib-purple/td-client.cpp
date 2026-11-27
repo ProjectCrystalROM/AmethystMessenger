@@ -1463,6 +1463,7 @@ void PurpleTdClient::onChatListReady()
     m_data.getChats(chats);
 
     for (const td::td_api::chat *chat: chats) {
+        loadForumTopicsForBuddyList(getId(*chat));
         const td::td_api::user *user = m_data.getUserByPrivateChat(*chat);
         if (user && isChatInContactList(m_data, *chat, user) && !isDeletedUser(*user)) {
             std::string userName = getPurpleBuddyName(*user);
@@ -3381,6 +3382,13 @@ void PurpleTdClient::onIncomingMessage(td::td_api::object_ptr<td::td_api::messag
         return;
     }
 
+    if (message->topic_id_ && message->topic_id_->get_id() == td::td_api::messageTopicForum::ID)
+        purple_debug_misc(config::pluginId,
+            "Received forum message %" G_GINT64_FORMAT " for topic %d in chat %" G_GINT64_FORMAT "\n",
+            message->id_,
+            static_cast<const td::td_api::messageTopicForum &>(*message->topic_id_).forum_topic_id_,
+            chatId.value());
+
     handleIncomingMessage(m_data, *chat, std::move(message), PendingMessageQueue::Append);
 }
 
@@ -3645,8 +3653,12 @@ void PurpleTdClient::updateSupergroup(td::td_api::object_ptr<td::td_api::supergr
     // purple_blist_find_chat doesn't work if account is not connected.
     // Updates are only supposed to come after authorizationStateReady which sets account to connected.
     // But check purple_account_is_connected just in case.
-    if (purple_account_is_connected(m_account))
+    if (purple_account_is_connected(m_account)) {
         updateSupergroupChat(m_data, id);
+        const td::td_api::chat *chat = m_data.getSupergroupChatByGroup(id);
+        if (chat)
+            loadForumTopicsForBuddyList(getId(*chat));
+    }
 }
 
 void PurpleTdClient::updateChat(const td::td_api::chat *chat)
@@ -3693,6 +3705,7 @@ void PurpleTdClient::updateChat(const td::td_api::chat *chat)
         if (supergroupId.valid()) {
             requestSupergroupFullInfo(supergroupId);
             updateSupergroupChat(m_data, supergroupId);
+            loadForumTopicsForBuddyList(getId(*chat));
         }
     } else {
         if (basicGroupId.valid() || supergroupId.valid())
@@ -4193,6 +4206,8 @@ bool PurpleTdClient::joinForumTopic(ChatId chatId, int32_t topicId)
                              topicId, chatId.value());
         return false;
     }
+    purple_debug_misc(config::pluginId, "Opening forum topic %d in chat %" G_GINT64_FORMAT "\n",
+                      topicId, chatId.value());
     int32_t purpleId = m_data.getPurpleForumTopicId(chatId, topicId);
     PurpleConvChat *conv = getChatConversation(m_data, *chat, purpleId, topicId);
     if (conv) {
@@ -4214,6 +4229,9 @@ bool PurpleTdClient::joinForumTopic(ChatId chatId, int32_t topicId)
                         return;
                     }
                     auto messages = td::move_tl_object_as<td::td_api::messages>(std::move(object));
+                    purple_debug_misc(config::pluginId,
+                        "Loaded %zu history messages for forum topic %d in chat %" G_GINT64_FORMAT "\n",
+                        messages->messages_.size(), topicId, chatId.value());
                     std::sort(messages->messages_.begin(), messages->messages_.end(),
                               [](const td::td_api::object_ptr<td::td_api::message> &a,
                                  const td::td_api::object_ptr<td::td_api::message> &b) {
@@ -4221,14 +4239,18 @@ bool PurpleTdClient::joinForumTopic(ChatId chatId, int32_t topicId)
                                       return false;
                                   return !b || (a->id_ < b->id_);
                               });
+                    size_t matchingTopics = 0;
                     for (auto &message: messages->messages_) {
                         if (!message || !message->topic_id_ ||
                             (message->topic_id_->get_id() != td::td_api::messageTopicForum::ID) ||
                             (static_cast<const td::td_api::messageTopicForum &>(*message->topic_id_).forum_topic_id_ != topicId))
                             continue;
+                        matchingTopics++;
                         handleIncomingMessage(m_data, *chat, std::move(message),
                                               PendingMessageQueue::Prepend, true);
                     }
+                    purple_debug_misc(config::pluginId,
+                        "Accepted %zu history messages for forum topic %d\n", matchingTopics, topicId);
                 });
         }
     }
@@ -4243,6 +4265,9 @@ int PurpleTdClient::sendGroupMessage(int purpleChatId, const char *message)
     const td::td_api::chat *chat = forumTopic ? m_data.getChat(topicChatId)
                                               : m_data.getChatByPurpleId(purpleChatId);
 
+    if (forumTopic)
+        purple_debug_misc(config::pluginId, "Sending forum topic %d message to chat %" G_GINT64_FORMAT "\n",
+                          topicId, topicChatId.value());
     if (!chat)
         purple_debug_warning(config::pluginId, "No chat found for purple id %d\n", purpleChatId);
     else if (!m_data.isGroupChatWithMembership(*chat))
@@ -5033,6 +5058,12 @@ void PurpleTdClient::populateGroupChatList(PurpleRoomlist *roomlist)
                         return;
                     }
                     const auto &topics = static_cast<const td::td_api::forumTopics &>(*object);
+                    const td::td_api::chat *forumChat = m_data.getChat(chatId);
+                    if (!forumChat) {
+                        completeOne();
+                        *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+                        return;
+                    }
                     for (const auto &topic: topics.topics_) {
                         if (!topic || !topic->info_ || topic->info_->chat_id_ != chatId.value() ||
                             (topic->info_->forum_topic_id_ <= 0) || topic->info_->is_hidden_)
@@ -5044,6 +5075,7 @@ void PurpleTdClient::populateGroupChatList(PurpleRoomlist *roomlist)
                         if (topicName.empty())
                             topicName = formatMessage(_("Topic {}"), std::to_string(topicId));
                         m_data.setForumTopicName(chatId, topicId, topicName);
+                        addForumTopicToBuddyList(m_data, *forumChat, topicId, topicName);
                         PurpleRoomlistRoom *room = purple_roomlist_room_new(PURPLE_ROOMLIST_ROOMTYPE_ROOM,
                                                                             topicName.c_str(), parent);
                         std::string address = getPurpleForumTopicName(chatId, topicId);
@@ -5062,6 +5094,81 @@ void PurpleTdClient::populateGroupChatList(PurpleRoomlist *roomlist)
         };
         (*fetchPage)(0, 0, 0);
     }
+}
+
+void PurpleTdClient::loadForumTopicsForBuddyList(ChatId chatId)
+{
+    const td::td_api::chat *chat = m_data.getChat(chatId);
+    if (!chat || !m_data.isGroupChatWithMembership(*chat))
+        return;
+    SupergroupId groupId = getSupergroupId(*chat);
+    const td::td_api::supergroup *group = groupId.valid() ? m_data.getSupergroup(groupId) : nullptr;
+    if (!group || !group->is_forum_ || group->is_channel_ || group->is_broadcast_group_ ||
+        group->is_direct_messages_group_)
+        return;
+    if (!m_forumTopicsRequestedForBlist.insert(chatId).second)
+        return;
+
+    getForumGroup(m_account, *chat);
+    using Cursor = std::tuple<int32_t, int64_t, int32_t>;
+    auto seen = std::make_shared<std::set<Cursor>>();
+    auto fetchPage = std::make_shared<std::function<void(int32_t, int64_t, int32_t)>>();
+    *fetchPage = [this, chatId, seen, fetchPage](int32_t offsetDate, int64_t offsetMessageId,
+                                                 int32_t offsetTopicId) {
+        Cursor cursor(offsetDate, offsetMessageId, offsetTopicId);
+        if (!seen->insert(cursor).second) {
+            purple_debug_warning(config::pluginId,
+                "Forum topic list repeated a cursor for buddy list chat %" G_GINT64_FORMAT "\n",
+                chatId.value());
+            m_forumTopicsRequestedForBlist.erase(chatId);
+            *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+            return;
+        }
+        auto request = td::td_api::make_object<td::td_api::getForumTopics>();
+        request->chat_id_ = chatId.value();
+        request->query_ = "";
+        request->icon_custom_emoji_id_ = 0;
+        request->exclude_open_ = false;
+        request->exclude_closed_ = false;
+        request->offset_date_ = offsetDate;
+        request->offset_message_id_ = offsetMessageId;
+        request->offset_forum_topic_id_ = offsetTopicId;
+        request->limit_ = 100;
+        m_transceiver.sendQuery(std::move(request),
+            [this, chatId, seen, fetchPage, cursor]
+            (uint64_t, td::td_api::object_ptr<td::td_api::Object> object) {
+                const td::td_api::chat *chat = m_data.getChat(chatId);
+                if (!chat || !object || (object->get_id() != td::td_api::forumTopics::ID)) {
+                    purple_debug_warning(config::pluginId,
+                        "Failed to load forum topics into buddy list for chat %" G_GINT64_FORMAT ": %s\n",
+                        chatId.value(), getDisplayedError(object).c_str());
+                    m_forumTopicsRequestedForBlist.erase(chatId);
+                    *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+                    return;
+                }
+                const auto &topics = static_cast<const td::td_api::forumTopics &>(*object);
+                for (const auto &topic: topics.topics_) {
+                    if (!topic || !topic->info_ || topic->info_->chat_id_ != chatId.value() ||
+                        topic->info_->forum_topic_id_ <= 0 || topic->info_->is_hidden_)
+                        continue;
+                    int32_t topicId = topic->info_->forum_topic_id_;
+                    std::string topicName = topic->info_->name_;
+                    if (topicName.empty() && topic->info_->is_general_)
+                        topicName = _("General");
+                    if (topicName.empty())
+                        topicName = formatMessage(_("Topic {}"), std::to_string(topicId));
+                    m_data.setForumTopicName(chatId, topicId, topicName);
+                    addForumTopicToBuddyList(m_data, *chat, topicId, topicName);
+                }
+                Cursor next(topics.next_offset_date_, topics.next_offset_message_id_,
+                            topics.next_offset_forum_topic_id_);
+                if ((next != cursor) && (topics.next_offset_forum_topic_id_ > 0))
+                    (*fetchPage)(std::get<0>(next), std::get<1>(next), std::get<2>(next));
+                else
+                    *fetchPage = std::function<void(int32_t, int64_t, int32_t)>();
+            });
+    };
+    (*fetchPage)(0, 0, 0);
 }
 
 void PurpleTdClient::checkTempFileUploads()

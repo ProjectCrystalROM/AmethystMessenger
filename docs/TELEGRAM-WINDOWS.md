@@ -41,9 +41,12 @@ implemented in Amethyst and still needs interactive testing.
 ## Forum topics
 
 Forum supergroups appear in the room list as categories, with each visible
-topic listed as a child room. Joining a topic opens its own conversation. The
-plugin loads the latest 50 messages when that conversation is first opened,
-sends text to the selected topic, and uses topic-scoped read receipts. Older
+topic listed as a child room. They are also added to the buddy list as a
+Pidgin contact group with each topic as a chat room beneath it. Joining a topic
+opens its own conversation. The plugin loads the latest 50 messages when that
+conversation is first opened, sends text to the selected topic, and uses
+topic-scoped read receipts. Topic text sends reach Telegram, but topic messages
+currently fail to display in the client; this is under investigation. Older
 history paging and topic-specific file uploads are not implemented yet.
 
 ## Build the plugin

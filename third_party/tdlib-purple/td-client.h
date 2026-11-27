@@ -100,6 +100,7 @@ public:
     void showInviteLink(const std::string &purpleChatName);
     void getGroupChatList(PurpleRoomlist *roomlist);
     void populateGroupChatList(PurpleRoomlist *roomlist);
+    void loadForumTopicsForBuddyList(ChatId chatId);
     bool joinForumTopic(ChatId chatId, int32_t topicId);
 
     void setTwoFactorAuth(const char *oldPassword, const char *newPassword, const char *hint,
@@ -355,6 +356,7 @@ private:
     // ~(N/window)*RTT. m_privateChatRequestsInFlight tracks the window.
     int                   m_privateChatRequestsInFlight = 0;
     bool                  m_chatListReady = false;
+    std::set<ChatId>      m_forumTopicsRequestedForBlist;
     // Chats opened, and which of their messages were last told to be seen
     std::map<ChatId, std::vector<MessageId>>    m_openChats;
     bool                  m_idle   = false;

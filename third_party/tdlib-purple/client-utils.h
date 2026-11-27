@@ -43,6 +43,9 @@ std::vector<const td::td_api::user *> getUsersByPurpleName(const char *buddyName
 PurpleConversation *getImConversation(PurpleAccount *account, const char *username);
 PurpleConvChat *    getChatConversation(TdAccountData &account, const td::td_api::chat &chat,
                                         int chatPurpleId, int32_t topicId = 0);
+PurpleGroup        *getForumGroup(PurpleAccount *account, const td::td_api::chat &chat);
+void                addForumTopicToBuddyList(TdAccountData &account, const td::td_api::chat &chat,
+                                              int32_t topicId, const std::string &topicName);
 PurpleConvChat *    findChatConversation(PurpleAccount *account, const td::td_api::chat &chat);
 bool                conversationHasFocus(PurpleConversation *conv);
 

@@ -351,6 +351,38 @@ static PurpleGroup *getTransientGroup(const char *groupName)
     return group;
 }
 
+PurpleGroup *getForumGroup(PurpleAccount *account, const td::td_api::chat &chat)
+{
+    (void)account;
+    PurpleGroup *group = purple_find_group(chat.title_.c_str());
+    if (!group) {
+        group = purple_group_new(chat.title_.c_str());
+        purple_blist_add_group(group, NULL);
+    }
+    return group;
+}
+
+void addForumTopicToBuddyList(TdAccountData &account, const td::td_api::chat &chat,
+                              int32_t topicId, const std::string &topicName)
+{
+    if (topicId <= 0)
+        return;
+    std::string name = getPurpleForumTopicName(getId(chat), topicId);
+    PurpleChat *purpleChat = purple_blist_find_chat(account.purpleAccount, name.c_str());
+    if (!purpleChat) {
+        purpleChat = purple_chat_new(account.purpleAccount, topicName.c_str(),
+                                     getChatComponents(chat, topicId));
+        purple_blist_add_chat(purpleChat, getForumGroup(account.purpleAccount, chat), NULL);
+        return;
+    }
+
+    const char *oldName = purple_chat_get_name(purpleChat);
+    if (oldName && topicName != oldName)
+        purple_blist_alias_chat(purpleChat, topicName.c_str());
+    if (purple_chat_get_group(purpleChat) != getForumGroup(account.purpleAccount, chat))
+        purple_blist_add_chat(purpleChat, getForumGroup(account.purpleAccount, chat), NULL);
+}
+
 void addTransientChat(TdAccountData &account, const td::td_api::chat &chat, int32_t topicId,
                      const std::string &topicName)
 {
@@ -811,6 +843,18 @@ void updateSupergroupChat(TdAccountData &account, SupergroupId groupId)
     else if (!chat)
         purpleDebug("Chat for supergroup {} does not exist yet\n", groupId.value());
     else {
+        if (group->is_forum_ && !group->is_channel_ && !group->is_broadcast_group_ &&
+            !group->is_direct_messages_group_) {
+            if (isGroupMember(group->status_))
+                getForumGroup(account.purpleAccount, *chat);
+            else
+                removeGroupChat(account.purpleAccount, *chat);
+            PurpleChat *oldForumChat = purple_blist_find_chat(account.purpleAccount,
+                                                              getPurpleChatName(*chat).c_str());
+            if (oldForumChat)
+                purple_blist_remove_chat(oldForumChat);
+            return;
+        }
         updateGroupChat(account, *chat, group->status_, "supergroup", std::to_string(groupId.value()));
         PurpleChat *purpleChat = purple_blist_find_chat(account.purpleAccount, getPurpleChatName(*chat).c_str());
         if (!purpleChat)
