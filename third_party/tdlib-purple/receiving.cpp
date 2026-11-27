@@ -3365,7 +3365,14 @@ void handleIncomingMessage(TdAccountData &account, const td::td_api::chat &chat,
 {
     if (!message) return;
     ChatId chatId = getId(chat);
+    // Fetched while still being sent, as for a tab redrawn just then, and sent since: it goes by
+    // its new id, or its marks would name one that is gone
+    MessageId sentId = account.getSentMessageId(chatId, getId(*message));
+    if (message->sending_state_ && (sentId != getId(*message)))
+        message->id_ = sentId.value();
+
     // A send may first arrive under TDLib's temporary ID and then again under its server ID.
+    // Normalize it first: an update can arrive late with the temporary ID, after send succeeded.
     // Libpurple 2.11 conversations append messages and cannot replace the earlier transcript row.
     // Keep live updates idempotent while allowing deliberate history redraws and media refreshes.
     if ((action == PendingMessageQueue::Append) && !redrawn &&
@@ -3374,11 +3381,6 @@ void handleIncomingMessage(TdAccountData &account, const td::td_api::chat &chat,
                           getId(*message).value());
         return;
     }
-    // Fetched while still being sent, as for a tab redrawn just then, and sent since: it goes by
-    // its new id, or its marks would name one that is gone
-    MessageId sentId = account.getSentMessageId(chatId, getId(*message));
-    if (message->sending_state_ && (sentId != getId(*message)))
-        message->id_ = sentId.value();
 
     if (isReadReceiptsEnabled(account.purpleAccount))
         account.addPendingReadReceipt(chatId, getId(*message));
