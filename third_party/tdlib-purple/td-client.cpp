@@ -4237,7 +4237,11 @@ bool PurpleTdClient::joinForumTopic(ChatId chatId, int32_t topicId)
                                  const td::td_api::object_ptr<td::td_api::message> &b) {
                                   if (!a)
                                       return false;
-                                  return !b || (a->id_ < b->id_);
+                                  if (!b)
+                                      return true;
+                                  if (a->date_ != b->date_)
+                                      return a->date_ < b->date_;
+                                  return a->id_ < b->id_;
                               });
                     size_t matchingTopics = 0;
                     for (auto &message: messages->messages_) {
