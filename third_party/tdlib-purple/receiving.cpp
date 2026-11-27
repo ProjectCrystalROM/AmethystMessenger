@@ -654,11 +654,23 @@ static void showMessageTextChat(TdAccountData &account, const td::td_api::chat &
                 purple_conv_chat_write(conv, purple_account_get_name_for_display(account.purpleAccount),
                                        text, flags, message.timestamp);
         } else {
-            if (purpleId != 0)
-                serv_got_chat_in(purple_account_get_connection(account.purpleAccount), purpleId,
+            int dispatchId = purpleId;
+            if (topicId > 0 && conv) {
+                int conversationId = purple_conv_chat_get_id(conv);
+                if (conversationId != purpleId)
+                    purple_debug_warning(config::pluginId,
+                        "Forum topic %d uses conversation id %d while TDLib route id is %d\n",
+                        topicId, conversationId, purpleId);
+                purple_conv_chat_write(conv,
+                    !message.incomingGroupchatSenderName.empty() ? message.incomingGroupchatSenderName.c_str() :
+                    !message.incomingGroupchatSender.empty() ? message.incomingGroupchatSender.c_str() : "someone",
+                    text, flags, message.timestamp);
+            } else if (dispatchId != 0) {
+                serv_got_chat_in(purple_account_get_connection(account.purpleAccount), dispatchId,
                                  !message.incomingGroupchatSenderName.empty() ? message.incomingGroupchatSenderName.c_str() :
                                  !message.incomingGroupchatSender.empty() ? message.incomingGroupchatSender.c_str() : "someone",
                                  flags, text, message.timestamp);
+            }
         }
     }
 
