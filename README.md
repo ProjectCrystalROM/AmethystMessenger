@@ -6,7 +6,7 @@
 
 Amethyst Messenger is an independently maintained multiprotocol instant messaging client derived from Pidgin 2.11.0. The project preserves the classic desktop messaging experience on historical operating systems and restores access to networks left behind by their original operators.
 
-The Windows build integrates msn-pecan as the MSN protocol implementation and configures it for CrossTalk. MSN appears as **MSN** in account setup. The installer also includes tdlib-purple for Telegram and purple-discord for Discord. Telegram and Discord require Vista or later; see their platform notes below. The project values historical compatibility, lightweight software, user choice, and preservation.
+The Windows installer ships five protocols: AIM, MSN, XMPP, Discord, and Telegram. MSN uses msn-pecan configured for CrossTalk and appears as **MSN** in account setup. Discord and Telegram use their bundled plugins and require Vista or later; see their platform notes below. Other Pidgin protocol implementations remain in the source tree but are omitted from the installer. The project values historical compatibility, lightweight software, user choice, and preservation.
 
 Amethyst Messenger is independent and is not affiliated with the original Pidgin developers, Microsoft, the msn-pecan developers, or the CrossTalk operators. Its source preserves upstream copyright notices and licensing terms.
 
@@ -20,7 +20,7 @@ Amethyst Messenger is independent and is not affiliated with the original Pidgin
 
 The application and existing bundled protocols retain the XP SP3 target. Telegram and Discord require Vista or later; they import Vista APIs and will not load on XP.
 
-The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. Other bundled protocols remain available, subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
+The Windows application uses the original Pidgin-era GTK2 runtime and 32-bit MinGW build. Amethyst keeps the libpurple library, plugin ABI, and protocol IDs. The included protocols remain subject to their network operators and services still operating. Retired services may be unavailable independently of the client.
 
 ## Install and connect to MSN
 

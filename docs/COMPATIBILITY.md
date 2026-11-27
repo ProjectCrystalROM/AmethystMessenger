@@ -27,7 +27,7 @@ The Discord plugin is a separate Vista-targeted x86 DLL (PE subsystem 6.0). It i
 | Discord plugin and icon loading | Passed Wine package/startup probe with JSON-GLib runtime and 16, 22, and 48 px protocol icons included. No plugin load error was logged. |
 | Discord consent dialog | Passed in Wine using a temporary account with no credentials. The first-connect warning appeared; choosing its default decline action disabled that account (`auto-login=0`). The user's successful connection and messaging also confirms the continue path. |
 | Discord login and messaging | User confirmed QR login and DM and server send/receive on a Vista SP2 test machine. Reconnection and other Discord features remain untested. |
-| Plugin selection | Passed. The installer contains `plugins/libmsn.dll` from msn-pecan and omits `pidgin.exe` and the upstream native MSN DLL. Existing protocol plugins are retained. |
+| Bundled protocols | AIM, msn-pecan/MSN, XMPP, Discord, and Telegram are included. Other upstream protocol handlers are removed from the installer; source remains in the repository. |
 | Dependencies | Passed static recursive PE inspection for x86 architecture, API-set imports, and Universal CRT imports. Existing GTK2, NSS, and support DLLs were retained. |
 | Windows Vista SP2 (32-bit app on x86 or through WOW64) | User confirmed Telegram DM/group/topic and Discord QR login plus DM/server send/receive. MSN sign-in and buddy addition were previously tested with the integrated Pecan implementation; full CrossTalk messaging remains unverified. |
 | Windows XP SP3 and XP Professional x64 SP2 (32-bit app; x64 through WOW64) | Static assessment only; neither edition has been runtime-tested. The installer and launcher contain no OS-version gate. |

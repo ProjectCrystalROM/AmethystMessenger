@@ -1,6 +1,6 @@
 # Windows runtime source references
 
-The Amethyst source repository contains the Pidgin 2.11.0 code and the integrated msn-pecan sources. The installer reuses the official Pidgin 2.11.0 Windows runtime for its GTK2 bundle, NSS backend, optional modules, and unchanged protocol plugins. The installer’s retained GPL notices are in `COPYING`, `COPYRIGHT`, and `Licenses/`.
+The Amethyst source repository contains the Pidgin 2.11.0 code and the integrated msn-pecan sources. The installer reuses the official Pidgin 2.11.0 Windows runtime for its GTK2 bundle, NSS backend, optional modules, and shared dependencies. The installer bundles AIM, MSN, XMPP, Discord, and Telegram protocol handlers; other in-tree Pidgin protocols are omitted from the installer. The installer’s retained GPL notices are in `COPYING`, `COPYRIGHT`, and `Licenses/`.
 
 The repository also contains the GPL-2.0-or-later tdlib-purple source at
 `third_party/tdlib-purple/`, based on commit

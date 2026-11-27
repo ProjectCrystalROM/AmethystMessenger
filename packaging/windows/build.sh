@@ -55,6 +55,18 @@ unzip -q "$work/gtk.zip" -d "$payload"
 test ! -e "$payload/plugins/libmsn.dll"
 test ! -e "$payload/pidgin.exe"
 
+# Keep only the selected bundled protocol handlers.
+# Sources for the other upstream protocols remain in the repository.
+unused_protocol_plugins=(
+    libbonjour.dll libgg.dll libicq.dll libirc.dll libmxit.dll libmyspace.dll
+    libnovell.dll libsametime.dll libsilc.dll libsimple.dll libyahoo.dll
+    libyahoojp.dll
+)
+for plugin in "${unused_protocol_plugins[@]}"; do
+    rm -f "$payload/plugins/$plugin"
+    test ! -e "$payload/plugins/$plugin"
+done
+
 install_pe() {
     SOURCE_DATE_EPOCH=0 i686-w64-mingw32-strip --strip-unneeded -o "$payload/$2" "$1"
 }
@@ -66,6 +78,9 @@ install_pe "$telegram_dll" plugins/libtelegram-tdlib.dll
 install_pe "$discord_dll" plugins/libdiscord.dll
 install -m 644 "$json_glib_dll" "$payload/libjson-glib-1.0-0.dll"
 install_pe pidgin/plugins/win32/winprefs/winprefs.dll plugins/winprefs.dll
+for plugin in libaim.dll libmsn.dll libxmpp.dll libdiscord.dll libtelegram-tdlib.dll; do
+    test -s "$payload/plugins/$plugin"
+done
 mkdir -p "$payload/pixmaps/pidgin/protocols"/{16,22,48}
 install -m 644 third_party/tdlib-purple/data/telegram16.png "$payload/pixmaps/pidgin/protocols/16/telegram.png"
 install -m 644 third_party/tdlib-purple/data/telegram22.png "$payload/pixmaps/pidgin/protocols/22/telegram.png"
