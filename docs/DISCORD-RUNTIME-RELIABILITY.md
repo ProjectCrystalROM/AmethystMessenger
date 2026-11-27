@@ -89,7 +89,8 @@ the shared pool. Compare it with the default build using the same account and
 request sequence. No conclusion about stale sockets, pool exhaustion or
 reliability can be drawn from the supplied logs or the deterministic framing
 tests alone. Do not ship the no-pool build as a permanent behavior change
-without comparative runtime evidence.
+without comparative runtime evidence. A diagnostic XP DLL pair and checksums
+are staged in `output/diagnostic/discord-nokeepalive-xp/`.
 
 ### Secondary observations
 
